@@ -1,0 +1,75 @@
+{
+  "_comment": "Configuration des règles de sécurité - ZONE 2 Gaines Techniques",
+  "_version": "1.0",
+  "_last_updated": "2026-02-09",
+
+  "GAINE-001": {
+    "name": "Chute d'objets dans gaines techniques",
+    "enabled": true,
+    "severity": "HAUTE",
+    "parameters": {
+      "require_fall_protection": true,
+      "protection_types": ["grille", "filet", "caillebotis", "platelage"],
+      "description": "Vérifier présence de protections anti-chute dans les gaines techniques verticales"
+    }
+  },
+
+  "GAINE-002": {
+    "name": "Croisement réseaux courant fort / courant faible",
+    "enabled": true,
+    "severity": "CRITIQUE",
+    "parameters": {
+      "min_distance_m": 0.30,
+      "courant_fort_keywords": ["cf", "courant fort", "power", "puissance", "force", "ht", "bt", "tgbt"],
+      "courant_faible_keywords": ["cfa", "courant faible", "data", "vdi", "rj45", "fibre", "tel", "video", "alarme"],
+      "description": "Distance minimale 30 cm entre supports courant fort et courant faible"
+    }
+  },
+
+  "GAINE-003": {
+    "name": "Trappes d'accès aux équipements",
+    "enabled": true,
+    "severity": "MOYENNE",
+    "parameters": {
+      "min_trappe_width_m": 0.60,
+      "min_trappe_height_m": 0.60,
+      "max_distance_to_equipment_m": 2.0,
+      "description": "Chaque équipement en gaine doit être accessible via une trappe"
+    }
+  },
+
+  "GAINE-004": {
+    "name": "Surcharge supports de câbles",
+    "enabled": true,
+    "severity": "HAUTE",
+    "parameters": {
+      "safety_margin_percent": 15,
+      "default_cable_weight_kg_per_m": 2.5,
+      "default_support_capacity_kg": 50,
+      "description": "Le poids des câbles ne doit pas dépasser la capacité portante des supports"
+    }
+  },
+  "GAINE-005": {
+    "name": "Calcul de charge des supports de cables",
+    "enabled": true,
+    "severity": "HAUTE",
+    "parameters": {
+      "safety_margin_percent": 20,
+      "default_support_capacity_kg": 90,
+      "default_weight_kg_per_m": 1.0,
+      "courant_fort_weight_kg_per_m": 1.4,
+      "courant_faible_weight_kg_per_m": 0.6,
+      "max_cable_distance_m": 0.6,
+      "length_property_keys": ["Length", "Longueur", "Length_m"],
+      "weight_property_keys": ["Weight", "Poids", "Masse"],
+      "description": "Calculer la charge des supports en sommant les cables suivant leur longueur et poids declares"
+    }
+  },
+  
+  "global_settings": {
+    "coordinate_precision_m": 0.01,
+    "ignore_empty_spaces": true,
+    "export_format": "json",
+    "log_level": "INFO"
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "_comment": "Mapping nomenclature pour gaines techniques - CHU Ibn Sina",
+  "_usage": "Classification automatique des espaces gaines techniques depuis LongName/Name",
+  "_version": "1.0",
+
+  "space_categories": {
+    "_comment": "Catégories d'espaces pour Zone 2 - Gaines Techniques",
+
+    "gaine_technique": {
+      "description": "Gaines techniques verticales et horizontales",
+      "rules": ["GAINE-001", "GAINE-002", "GAINE-003", "GAINE-004", "GAINE-005"],
+      "keywords": [
+        "G.T",
+        "G.T.",
+        "Gaine Technique",
+        "Gaine technique",
+        "gaine technique",
+        "GT",
+        "Gaine Elec",
+        "Gaine CVC",
+        "Gaine Plomberie",
+        "Gaine Ventilation",
+        "Trémie",
+        "Colonne montante",
+        "Colonne technique"
+      ],
+      "keywords_english": [
+        "technical shaft",
+        "service shaft",
+        "riser",
+        "duct shaft",
+        "mechanical shaft",
+        "electrical shaft"
+      ],
+      "ifc_space_types": [
+        "IfcSpaceTypeEnum.SHAFT"
+      ],
+      "name_prefixes": ["DOM-GTEC", "DOM-GT"]
+    },
+
+    "local_technique": {
+      "description": "Locaux techniques associés aux gaines",
+      "rules": ["GAINE-002", "GAINE-004", "GAINE-005"],
+      "keywords": [
+        "Local Technique",
+        "Local.Technique",
+        "LT VDI",
+        "Local VDI",
+        "Local armoire VDI",
+        "local électrique",
+        "salle électrique"
+      ],
+      "name_prefixes": ["DOM-ITEC"]
+    },
+
+    "faux_plafond": {
+      "description": "Espaces faux-plafond (chemins de câbles)",
+      "rules": ["GAINE-002", "GAINE-004", "GAINE-005"],
+      "keywords": [
+        "Faux plafond",
+        "Faux-plafond",
+        "Plénum",
+        "Plenum"
+      ]
+    }
+  },
+
+  "equipment_categories": {
+    "courant_fort": {
+      "description": "Équipements courant fort (puissance)",
+      "keywords": ["cf", "courant fort", "power", "puissance", "force", "ht", "bt", "tgbt", "transfo"],
+      "ifc_types": [
+        "IfcElectricDistributionBoard",
+        "IfcTransformer",
+        "IfcElectricGenerator",
+        "IfcCableCarrierSegment",
+        "IfcCableSegment"
+      ]
+    },
+    "courant_faible": {
+      "description": "Équipements courant faible (données, communication)",
+      "keywords": ["cfa", "courant faible", "data", "vdi", "rj45", "fibre", "tel", "video", "alarme", "détection"],
+      "ifc_types": [
+        "IfcCommunicationsAppliance",
+        "IfcAudioVisualAppliance",
+        "IfcAlarm",
+        "IfcSensor"
+      ]
+    },
+    "support_cables": {
+      "description": "Supports et chemins de câbles",
+      "keywords": ["chemin de câbles", "support", "échelle à câbles", "goulotte", "tablette", "rail"],
+      "ifc_types": [
+        "IfcCableCarrierFitting",
+        "IfcCableCarrierSegment",
+        "IfcDiscreteAccessory"
+      ]
+    }
+  },
+
+  "regex_patterns": {
+    "gaine_pattern": "(?i)(g\\.?t\\.?|gaine|shaft|riser|trémie|colonne\\s*(montante|technique))",
+    "courant_fort_pattern": "(?i)(courant\\s*fort|cf|power|puissance|force|tgbt|transfo)",
+    "courant_faible_pattern": "(?i)(courant\\s*faible|cfa|data|vdi|rj45|fibre|télécom|alarme)"
+  }
+}

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <!-- Application principale (ruban + panneau) -->
+  <AddIn Type="Application">
+    <Name>CHU Security Analyzer</Name>
+    <Assembly>CHU_SecurityAnalyzer.dll</Assembly>
+    <FullClassName>CHU_SecurityAnalyzer.App</FullClassName>
+    <AddInId>B1C2D3E4-F5A6-7890-1234-567890ABCDEF</AddInId>
+    <VendorId>CHU_IBN_SINA</VendorId>
+    <VendorDescription>CHU Ibn Sina - Analyse Conformité Sécurité</VendorDescription>
+  </AddIn>
+</RevitAddIns>

@@ -1,0 +1,73 @@
+{
+  "_comment": "Mapping nomenclature pour planchers techniques - CHU Ibn Sina",
+  "_usage": "Classification automatique des espaces planchers techniques depuis LongName/Name",
+  "_version": "1.0",
+
+  "space_categories": {
+    "_comment": "Catégories d'espaces pour Zone 4 - Planchers Techniques",
+
+    "plancher_technique": {
+      "description": "Espaces avec plancher technique (faux-plancher, dalle surélevée)",
+      "rules": ["PLAN-001", "PLAN-002", "PLAN-003", "PLAN-004", "PLAN-005"],
+      "keywords": [
+        "Plancher technique",
+        "Faux plancher",
+        "Faux-plancher",
+        "Plancher surélevé",
+        "Dalle surélevée",
+        "Raised floor",
+        "Plancher collaborant"
+      ],
+      "name_prefixes": ["DOM-PTEC", "DOM-PLAN"]
+    },
+
+    "local_technique": {
+      "description": "Locaux techniques avec plancher surélevé",
+      "rules": ["PLAN-001", "PLAN-002", "PLAN-003", "PLAN-004", "PLAN-005"],
+      "keywords": [
+        "Local Technique",
+        "Local.Technique",
+        "LT VDI",
+        "Local VDI",
+        "Local serveur",
+        "Salle serveur",
+        "Salle informatique",
+        "Data center",
+        "TGBT",
+        "local électrique",
+        "salle électrique"
+      ],
+      "name_prefixes": ["DOM-ITEC", "DOM-GTEC"]
+    },
+
+    "gaine_technique": {
+      "description": "Gaines techniques avec accès plancher",
+      "rules": ["PLAN-001", "PLAN-004"],
+      "keywords": [
+        "G.T",
+        "G.T.",
+        "Gaine Technique",
+        "Gaine technique"
+      ],
+      "name_prefixes": ["DOM-GT"]
+    }
+  },
+
+  "equipment_categories": {
+    "cable": {
+      "description": "Câbles sous plancher",
+      "keywords": ["câble", "cable", "fil", "conducteur", "wire"],
+      "ifc_types": ["IfcCableSegment", "IfcCableFitting"]
+    },
+    "dalle": {
+      "description": "Dalles de plancher technique",
+      "keywords": ["dalle", "panneau", "plaque", "tile", "panel"],
+      "ifc_types": ["IfcCovering", "IfcPlate"]
+    }
+  },
+
+  "regex_patterns": {
+    "plancher_pattern": "(?i)(plancher[\\s\\-]?technique|faux[\\s\\-]?plancher|raised\\s*floor|dalle\\s*surélevée)",
+    "local_tech_pattern": "(?i)(local[\\s\\.]?technique|salle\\s*(serveur|informatique)|data\\s*center|tgbt)"
+  }
+}

@@ -1,0 +1,35 @@
+# ============================================================================
+# DÉPENDANCES PYTHON - ZONE 1 LOCAUX ÉLECTRIQUES
+# ============================================================================
+
+# === EXTRACTION IFC ===
+ifcopenshell==0.7.0         # Lecture fichiers IFC
+ifcopenshell-python==0.7.0  # Bindings Python pour IFC
+
+# === CALCULS GÉOMÉTRIQUES ===
+numpy==1.24.3               # Calculs matriciels et géométrie
+scipy==1.10.1               # Calculs scientifiques avancés
+
+# === TRAITEMENT DONNÉES ===
+pandas==2.0.3               # Manipulation données tabulaires
+
+# === GÉNÉRATION RAPPORTS ===
+openpyxl==3.1.2            # Export Excel
+reportlab==4.0.4           # Génération PDF (futur)
+
+# === LOGGING & MONITORING ===
+coloredlogs==15.0.1        # Logs colorés dans terminal
+python-json-logger==2.0.7  # Logs format JSON
+
+# === CONFIGURATION ===
+python-dotenv==1.0.0       # Gestion variables environnement
+pyyaml==6.0.1              # Support fichiers YAML (optionnel)
+
+# === UTILITAIRES ===
+tqdm==4.65.0               # Barres de progression
+click==8.1.7               # Interface ligne de commande élégante
+
+# === DÉVELOPPEMENT (optionnel) ===
+# pytest==7.4.0            # Tests unitaires
+# black==23.7.0            # Formatage code
+# pylint==2.17.5           # Linter

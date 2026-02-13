@@ -1,0 +1,71 @@
+{
+  "_comment": "Configuration des règles de sécurité - ZONE 1 Locaux Électriques",
+  "_version": "1.0",
+  "_last_updated": "2026-02-05",
+
+  "ELEC-001": {
+    "name": "Vérification poids équipements vs capacité dalle",
+    "enabled": true,
+    "severity": "CRITICAL",
+    "parameters": {
+      "weight_threshold_kg": 150,
+      "safety_margin_percent": 10,
+      "check_cumulative_weight": true,
+      "description": "Seuil modifié à 150kg suite réunion encadrant du 05/02/2026"
+    }
+  },
+
+  "ELEC-002": {
+    "name": "Ventilation locaux techniques",
+    "enabled": true,
+    "severity": "IMPORTANT",
+    "parameters": {
+      "min_volume_per_equipment_m3": 10,
+      "min_air_renewal_rate_per_hour": 2,
+      "equipment_types_requiring_ventilation": [
+        "IfcTransformer",
+        "IfcElectricDistributionBoard",
+        "IfcUnitaryControlElement"
+      ],
+      "description": "Volume minimum 10m³ par équipement électrique"
+    }
+  },
+
+  "ELEC-003": {
+    "name": "Largeur porte vs dimensions équipement",
+    "enabled": true,
+    "severity": "IMPORTANT",
+    "parameters": {
+      "clearance_margin_cm": 20,
+      "check_diagonal": true,
+      "description": "Largeur porte doit excéder dimension max équipement + 20cm"
+    }
+  },
+
+  "ELEC-004": {
+    "name": "Zones humides - Protection IP65 requise",
+    "enabled": true,
+    "severity": "CRITICAL",
+    "parameters": {
+      "required_ip_rating": "IP65",
+      "required_material": "inox",
+      "detection_keywords": [
+        "douche",
+        "salle de bain",
+        "sanitaire",
+        "WC",
+        "bathroom",
+        "shower",
+        "wet room"
+      ],
+      "description": "Équipements en zones humides doivent être IP65 + inox"
+    }
+  },
+
+  "global_settings": {
+    "coordinate_precision_m": 0.01,
+    "ignore_empty_spaces": true,
+    "export_format": "json",
+    "log_level": "INFO"
+  }
+}

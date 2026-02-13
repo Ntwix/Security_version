@@ -1,0 +1,36 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Maquettes IFC (trop volumineux pour GitHub)
+maquettes/*.ifc
+
+# Logs
+logs/
+
+# Resultats generes
+resultats/
+
+# Donnees extraites
+extracted_data.json
+
+# Visual Studio / C# build
+RevitPlugin/CHU_SecurityAnalyzer/bin/
+RevitPlugin/CHU_SecurityAnalyzer/obj/
+*.suo
+*.user
+*.vs/
+*.csproj.user
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store

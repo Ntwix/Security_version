@@ -1,0 +1,103 @@
+{
+  "_comment": "Configuration des règles de sécurité - ZONE 4 Planchers Techniques",
+  "_version": "1.0",
+  "_last_updated": "2026-02-10",
+  "_mode": "formulaire_interactif",
+
+  "PLAN-001": {
+    "name": "Présence de planchers techniques",
+    "enabled": true,
+    "severity": "HAUTE",
+    "mode": "formulaire",
+    "parameters": {
+      "question": "Y a-t-il des planchers techniques ?",
+      "type": "oui_non",
+      "conditional": {
+        "if_yes": {
+          "question": "Quel est le type de plancher technique ?",
+          "type": "liste_deroulante",
+          "options": [
+            "Plancher surélevé (faux-plancher)",
+            "Plancher technique accessible",
+            "Caillebotis métallique",
+            "Dalle amovible",
+            "Plancher collaborant",
+            "Autre"
+          ]
+        }
+      },
+      "description": "Identifier la présence et le type de planchers techniques dans les zones analysées"
+    }
+  },
+
+  "PLAN-002": {
+    "name": "Protection des câbles",
+    "enabled": true,
+    "severity": "HAUTE",
+    "mode": "formulaire",
+    "parameters": {
+      "question": "Les câbles sont-ils protégés ?",
+      "type": "oui_non",
+      "conditional": {
+        "if_no": {
+          "alert": "ATTENTION : Câbles non protégés - Risque électrique et mécanique",
+          "recommendation": "Installer des goulottes, chemins de câbles ou protections mécaniques"
+        }
+      },
+      "description": "Vérifier que les câbles passant sous ou dans le plancher technique sont correctement protégés"
+    }
+  },
+
+  "PLAN-003": {
+    "name": "Risques d'humidité",
+    "enabled": true,
+    "severity": "HAUTE",
+    "mode": "formulaire",
+    "parameters": {
+      "question": "Y a-t-il des risques d'humidité ?",
+      "type": "oui_non",
+      "conditional": {
+        "if_yes": {
+          "alert": "ATTENTION : Risque d'humidité détecté - Risque électrique et de corrosion",
+          "recommendation": "Prévoir étanchéité, drainage et protection IP adaptée des équipements"
+        }
+      },
+      "description": "Identifier les risques d'humidité pouvant affecter les installations sous plancher"
+    }
+  },
+
+  "PLAN-004": {
+    "name": "Risques d'écrasement des doigts",
+    "enabled": true,
+    "severity": "HAUTE",
+    "mode": "formulaire",
+    "parameters": {
+      "question": "Y a-t-il des risques d'écrasement des doigts ?",
+      "type": "oui_non",
+      "conditional": {
+        "if_yes": {
+          "alert": "ATTENTION : Risque d'écrasement des doigts - Risque corporel",
+          "recommendation": "Installer des systèmes de levage assisté pour les dalles, prévoir des poignées de préhension"
+        }
+      },
+      "description": "Identifier les risques d'écrasement lors de la manipulation des éléments de plancher"
+    }
+  },
+
+  "PLAN-005": {
+    "name": "Synthèse des risques planchers techniques",
+    "enabled": true,
+    "severity": "HAUTE",
+    "mode": "formulaire",
+    "parameters": {
+      "description": "Synthèse automatique générée à partir des réponses PLAN-001 à PLAN-004"
+    }
+  },
+
+  "global_settings": {
+    "coordinate_precision_m": 0.01,
+    "ignore_empty_spaces": true,
+    "export_format": "json",
+    "log_level": "INFO"
+  }
+}

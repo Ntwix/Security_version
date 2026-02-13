@@ -1,0 +1,62 @@
+{
+  "_comment": "Configuration des règles de sécurité - ZONE 3 Faux Plafonds Techniques",
+  "_version": "1.0",
+  "_last_updated": "2026-02-09",
+
+  "FPLAF-001": {
+    "name": "Chute de hauteur - Hauteur des pièces",
+    "enabled": true,
+    "severity": "MOYENNE",
+    "parameters": {
+      "min_height_m": 2.50,
+      "max_safe_height_m": 3.00,
+      "critical_height_m": 4.00,
+      "supported_units": ["m", "cm", "mm"],
+      "default_unit": "m",
+      "height_property_keys": ["Height", "OverallHeight", "Hauteur", "ClearHeight", "NetHeight"],
+      "description": "Vérifier que la hauteur des pièces avec faux-plafond respecte les normes de sécurité pour le travail en hauteur"
+    }
+  },
+
+  "FPLAF-002": {
+    "name": "Surcharge plafond - Poids câbles vs capacité portante",
+    "enabled": true,
+    "severity": "HAUTE",
+    "parameters": {
+      "safety_margin_percent": 20,
+      "default_ceiling_capacity_kg_per_m2": 25,
+      "default_cable_weight_kg_per_m": 1.5,
+      "default_equipment_weight_kg": 5.0,
+      "capacity_property_keys": ["LoadCapacity", "ChargeAdmissible", "MaxLoad", "Capacite", "Capacity"],
+      "weight_property_keys": ["Weight", "Poids", "Masse", "NetWeight", "GrossWeight"],
+      "description": "Le poids total des câbles et équipements ne doit pas dépasser la capacité portante du faux-plafond"
+    }
+  },
+
+  "FPLAF-003": {
+    "name": "Détection poussières - Alerte présence poussières",
+    "enabled": true,
+    "severity": "MOYENNE",
+    "parameters": {
+      "check_insulation_materials": true,
+      "check_fiber_materials": true,
+      "dust_risk_keywords": [
+        "laine", "fibre", "amiante", "isolant", "mineral wool",
+        "glass fiber", "rock wool", "cellulose", "vermiculite",
+        "perlite", "polystyrene", "mousse", "flocage"
+      ],
+      "dust_risk_ifc_materials": [
+        "mineral", "fibre", "insulation", "isolant", "wool"
+      ],
+      "alert_message": "Attention : présence de poussières potentielles détectée",
+      "description": "Détecter la présence de matériaux générateurs de poussières dans les faux-plafonds et afficher une alerte"
+    }
+  },
+
+  "global_settings": {
+    "coordinate_precision_m": 0.01,
+    "ignore_empty_spaces": true,
+    "export_format": "json",
+    "log_level": "INFO"
+  }
+}

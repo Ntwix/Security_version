@@ -1,0 +1,261 @@
+{
+  "_comment": "Mapping nomenclature Revit/IFC vers catégories fonctionnelles - CHU Ibn Sina",
+  "_usage": "Classification automatique des espaces depuis LongName/Name pour les analyseurs de conformité",
+  "_version": "2.0",
+
+  "space_categories": {
+    "_comment": "Catégories d'espaces détectées dans la maquette Ibn_Sina_ARCHI.ifc",
+
+    "local_technique": {
+      "description": "Locaux techniques électriques - Règles ELEC-001, ELEC-002, ELEC-003",
+      "rules": ["ELEC-001", "ELEC-002", "ELEC-003"],
+      "keywords": [
+        "Local Technique",
+        "Local.Technique",
+        "LT VDI",
+        "Local VDI",
+        "Local armoire VDI",
+        "Gaine Technique",
+        "local électrique",
+        "salle électrique",
+        "local tgbt",
+        "local transformateur",
+        "local onduleur",
+        "salle serveur",
+        "data center",
+        "poste de transformation",
+        "tableau général"
+      ],
+      "keywords_english": [
+        "electrical room",
+        "technical room",
+        "server room",
+        "transformer room",
+        "switchgear room",
+        "mcc room"
+      ],
+      "ifc_space_types": [
+        "IfcSpaceTypeEnum.ELECTRICALROOM",
+        "IfcSpaceTypeEnum.TECHNICALROOM"
+      ],
+      "name_prefixes": ["DOM-ITEC"]
+    },
+
+    "zone_humide": {
+      "description": "Zones humides (salles de bain, toilettes) - Règle ELEC-004 (IP65)",
+      "rules": ["ELEC-004"],
+      "keywords": [
+        "Salle de bain",
+        "Salle de bain d'Hote",
+        "Sdb",
+        "Toilette",
+        "Toilette Femme",
+        "Toilette Homme",
+        "Toilette 2",
+        "douche",
+        "sanitaire",
+        "wc",
+        "lavabo",
+        "salle d'eau"
+      ],
+      "keywords_english": [
+        "shower",
+        "bathroom",
+        "restroom",
+        "toilet",
+        "washroom",
+        "wet room",
+        "laundry"
+      ],
+      "ifc_space_types": [
+        "IfcSpaceTypeEnum.SANITARY",
+        "IfcSpaceTypeEnum.BATHROOM"
+      ]
+    },
+
+    "cuisine_restauration": {
+      "description": "Cuisines et restauration - Zones avec eau et équipements spécifiques",
+      "rules": ["ELEC-004"],
+      "keywords": [
+        "Cuisine",
+        "Réfectoire",
+        "Self",
+        "Légumerie",
+        "Office alimentaire",
+        "Cafétéria",
+        "Cafétériat",
+        "Stockage vaisselle"
+      ]
+    },
+
+    "laverie_menage": {
+      "description": "Laverie et locaux ménage - Zones humides secondaires",
+      "rules": ["ELEC-004"],
+      "keywords": [
+        "Laverie",
+        "Local Ménage",
+        "Local ménage",
+        "buanderie",
+        "blanchisserie"
+      ]
+    },
+
+    "hall": {
+      "description": "Halls et accueil - Espaces de circulation principale",
+      "rules": [],
+      "keywords": [
+        "Hall",
+        "Hall Accueil",
+        "Hall Réfectoire",
+        "Hall d'Hote",
+        "Accueil"
+      ]
+    },
+
+    "circulation": {
+      "description": "Circulations, couloirs, passerelles, SAS",
+      "rules": [],
+      "keywords": [
+        "Circulation",
+        "Passerelle",
+        "SAS"
+      ],
+      "name_prefixes": ["DOM-CGEN"]
+    },
+
+    "escalier_ascenseur": {
+      "description": "Escaliers et ascenseurs - Circulations verticales",
+      "rules": [],
+      "keywords": [
+        "Escalier",
+        "ESC",
+        "ASC"
+      ]
+    },
+
+    "studio_chambre": {
+      "description": "Studios et chambres d'hébergement",
+      "rules": [],
+      "keywords": [
+        "Studio",
+        "Chambre d'Hote",
+        "Hall d'Hote"
+      ]
+    },
+
+    "bureau_reunion": {
+      "description": "Bureaux, salles de réunion, secrétariat",
+      "rules": [],
+      "keywords": [
+        "Bureaux",
+        "Bureaux AMIR",
+        "Bureaux Superviseur",
+        "Salle de Réunion",
+        "secrétariat",
+        "secrétariat AMIR",
+        "Salle d'étude"
+      ]
+    },
+
+    "stockage": {
+      "description": "Stockage et rangement",
+      "rules": [],
+      "keywords": [
+        "Stockage",
+        "Local Rangement"
+      ]
+    },
+
+    "exterieur": {
+      "description": "Espaces extérieurs - Balcons, terrasses",
+      "rules": [],
+      "keywords": [
+        "Balcon",
+        "Terrasse",
+        "TERRASSE",
+        "Gradins"
+      ]
+    }
+  },
+
+  "electrical_equipment": {
+    "description": "Équipements électriques à détecter",
+    "heavy_equipment": {
+      "description": "Équipements lourds (règle ELEC-001)",
+      "keywords": [
+        "transformateur",
+        "onduleur",
+        "groupe électrogène",
+        "batterie",
+        "armoire électrique",
+        "coffret",
+        "tgbt"
+      ],
+      "ifc_types": [
+        "IfcTransformer",
+        "IfcElectricDistributionBoard",
+        "IfcUnitaryControlElement",
+        "IfcElectricGenerator"
+      ],
+      "typical_weights_kg": {
+        "IfcTransformer": 250,
+        "IfcElectricDistributionBoard": 120,
+        "IfcUnitaryControlElement": 50,
+        "IfcElectricGenerator": 500
+      }
+    },
+    "wet_zone_equipment": {
+      "description": "Équipements en zones humides (règle ELEC-004)",
+      "keywords": [
+        "prise",
+        "interrupteur",
+        "luminaire",
+        "ventilateur",
+        "chauffage"
+      ],
+      "ifc_types": [
+        "IfcOutlet",
+        "IfcSwitchingDevice",
+        "IfcLightFixture",
+        "IfcFan",
+        "IfcElectricHeater"
+      ]
+    }
+  },
+
+  "door_types": {
+    "description": "Types de portes à analyser (règle ELEC-003)",
+    "keywords": [
+      "porte",
+      "door",
+      "baie",
+      "opening"
+    ],
+    "ifc_types": [
+      "IfcDoor",
+      "IfcDoorStandardCase"
+    ]
+  },
+
+  "slab_types": {
+    "description": "Dalles et planchers (règle ELEC-001)",
+    "keywords": [
+      "dalle",
+      "plancher",
+      "slab",
+      "floor"
+    ],
+    "ifc_types": [
+      "IfcSlab",
+      "IfcSlabStandardCase"
+    ]
+  },
+
+  "regex_patterns": {
+    "description": "Patterns regex pour extraction avancée",
+    "technical_room_pattern": "(?i)(local|salle|lt|gaine)\\s*(technique|électrique|tgbt|vdi)",
+    "wet_room_pattern": "(?i)(douche|bain|sdb|sanitaire|wc|toilet)",
+    "cuisine_pattern": "(?i)(cuisine|réfectoire|self|légumerie|office|cafétéria)",
+    "equipment_weight_pattern": "(?i)poids[:\\s]*(\\d+)\\s*kg"
+  }
+}

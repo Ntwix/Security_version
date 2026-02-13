@@ -1,0 +1,112 @@
+{
+  "_comment": "Mapping nomenclature pour faux-plafonds techniques - CHU Ibn Sina",
+  "_usage": "Classification automatique des espaces faux-plafonds depuis LongName/Name",
+  "_version": "1.0",
+
+  "space_categories": {
+    "_comment": "Catégories d'espaces pour Zone 3 - Faux Plafonds Techniques",
+
+    "faux_plafond": {
+      "description": "Espaces faux-plafond (chemins de câbles, plénum)",
+      "rules": ["FPLAF-001", "FPLAF-002", "FPLAF-003"],
+      "keywords": [
+        "Faux plafond",
+        "Faux-plafond",
+        "Faux Plafond",
+        "faux plafond",
+        "FP",
+        "F.P",
+        "F.P.",
+        "Plénum",
+        "Plenum",
+        "plénum",
+        "Plafond technique",
+        "Plafond suspendu",
+        "Sous-plafond"
+      ],
+      "keywords_english": [
+        "false ceiling",
+        "suspended ceiling",
+        "drop ceiling",
+        "plenum",
+        "ceiling void",
+        "above ceiling"
+      ],
+      "ifc_space_types": [
+        "IfcSpaceTypeEnum.GFA"
+      ],
+      "name_prefixes": ["DOM-FP", "DOM-FPLAF"]
+    },
+
+    "local_technique": {
+      "description": "Locaux techniques avec faux-plafond",
+      "rules": ["FPLAF-001", "FPLAF-002", "FPLAF-003"],
+      "keywords": [
+        "Local Technique",
+        "Local.Technique",
+        "LT VDI",
+        "Local VDI",
+        "local électrique",
+        "salle électrique",
+        "Gaine Technique",
+        "G.T"
+      ],
+      "name_prefixes": ["DOM-ITEC", "DOM-GTEC"]
+    },
+
+    "circulation": {
+      "description": "Espaces de circulation avec faux-plafond",
+      "rules": ["FPLAF-001", "FPLAF-003"],
+      "keywords": [
+        "Circulation",
+        "Couloir",
+        "Dégagement",
+        "Hall",
+        "SAS"
+      ],
+      "name_prefixes": ["DOM-CIRC"]
+    }
+  },
+
+  "equipment_categories": {
+    "cable": {
+      "description": "Câbles dans le faux-plafond",
+      "keywords": ["câble", "cable", "fil", "conducteur", "wire"],
+      "ifc_types": [
+        "IfcCableSegment",
+        "IfcCableFitting"
+      ]
+    },
+    "support_cables": {
+      "description": "Supports et chemins de câbles",
+      "keywords": ["chemin de câbles", "support", "échelle à câbles", "goulotte", "tablette", "rail", "cable tray"],
+      "ifc_types": [
+        "IfcCableCarrierFitting",
+        "IfcCableCarrierSegment",
+        "IfcDiscreteAccessory"
+      ]
+    },
+    "luminaire": {
+      "description": "Luminaires encastrés dans le faux-plafond",
+      "keywords": ["luminaire", "éclairage", "spot", "dalle lumineuse", "plafonnier"],
+      "ifc_types": [
+        "IfcLightFixture"
+      ]
+    },
+    "cvc": {
+      "description": "Équipements CVC dans le plénum",
+      "keywords": ["gaine ventilation", "diffuseur", "bouche", "cvc", "hvac", "conduit"],
+      "ifc_types": [
+        "IfcDuctSegment",
+        "IfcAirTerminal",
+        "IfcDuctFitting"
+      ]
+    }
+  },
+
+  "regex_patterns": {
+    "faux_plafond_pattern": "(?i)(faux[\\s\\-]?plafond|f\\.?p\\.?|pl[eé]num|plafond\\s*(technique|suspendu)|ceiling)",
+    "cable_pattern": "(?i)(c[aâ]ble|fil|conducteur|wire)",
+    "poussiere_pattern": "(?i)(poussi[eè]re|dust|particule|fibre)"
+  }
+}
