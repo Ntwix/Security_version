@@ -2,10 +2,10 @@
 ============================================================================
 ELEC-002 - Vérification Ventilation Locaux Techniques
 ============================================================================
-Règle: Les locaux techniques doivent avoir un volume suffisant pour assurer
-la ventilation des équipements électriques.
+Règle: Chaque local technique électrique doit disposer d'une ventilation.
 
-Critère: Minimum 10m³ par équipement électrique
+Critère: Signaler les locaux techniques (hors gaines < 5m²) qui nécessitent
+une ventilation pour les équipements dégageant de la chaleur.
 """
 
 import json
@@ -21,6 +21,9 @@ class ELEC002VentilationChecker:
 
     RULE_ID = "ELEC-002"
     RULE_NAME = "Vérification ventilation locaux techniques"
+
+    # Surface minimale pour considérer un espace comme un vrai local (pas une gaine)
+    MIN_FLOOR_AREA_M2 = 5.0
 
     def __init__(self, config_path: str = None):
         if config_path is None:
@@ -39,13 +42,10 @@ class ELEC002VentilationChecker:
                 config_full = json.load(f)
                 self.config = config_full.get(self.RULE_ID, {})
 
-            self.min_volume_per_equipment = self.config.get('parameters', {}).get('min_volume_per_equipment_m3', 10)
-
-            logger.debug(f"  Config {self.RULE_ID}: {self.min_volume_per_equipment}m³/équipement")
+            logger.debug(f"  Config {self.RULE_ID} chargée")
 
         except Exception as e:
             logger.error(f"  Erreur config {self.RULE_ID}: {str(e)}")
-            self.min_volume_per_equipment = 10
 
     def analyze(self, spaces: List[Dict], equipment: List[Dict],
                 slabs: List[Dict], space_types: Dict) -> List[Dict]:
@@ -68,9 +68,13 @@ class ELEC002VentilationChecker:
     def _analyze_space(self, space: Dict, equipment: List[Dict]):
         """Analyse ventilation d'un espace"""
         space_name = space['name']
-        space_volume = space['volume_m3']
+        floor_area = space.get('floor_area_m2') or 0
 
-        # Compter équipements dans espace
+        # Filtrer les gaines techniques (trop petites pour être des locaux)
+        if floor_area < self.MIN_FLOOR_AREA_M2:
+            return
+
+        # Compter équipements dans l'espace
         space_bbox_min = space['bbox_min']
         space_bbox_max = space['bbox_max']
 
@@ -85,33 +89,24 @@ class ELEC002VentilationChecker:
         if equipment_count == 0:
             return
 
-        # Volume requis
-        required_volume = equipment_count * self.min_volume_per_equipment
+        # Local technique avec des équipements → signaler besoin de ventilation
+        violation = {
+            "rule_id": self.RULE_ID,
+            "severity": "IMPORTANT",
+            "space_name": space_name,
+            "space_global_id": space['global_id'],
+            "description": "Local technique nécessitant une ventilation",
+            "details": {
+                "floor_area_m2": round(floor_area, 2),
+                "equipment_count": equipment_count,
+                "equipment_list": equipment_names[:10]
+            },
+            "location": space['centroid'],
+            "recommendation": f"Prévoir une ventilation pour ce local technique "
+                             f"({equipment_count} équipements, {round(floor_area, 2)} m²)"
+        }
 
-        # Vérifier
-        if space_volume < required_volume:
-            deficit = required_volume - space_volume
+        self.violations.append(violation)
+        logger.rule_violation(self.RULE_ID, space_name,
+                            f"Ventilation requise - {equipment_count} équipements, {floor_area:.1f} m²")
 
-            violation = {
-                "rule_id": self.RULE_ID,
-                "severity": "IMPORTANT",
-                "space_name": space_name,
-                "space_global_id": space['global_id'],
-                "description": "Volume insuffisant pour ventilation",
-                "details": {
-                    "space_volume_m3": round(space_volume, 2),
-                    "required_volume_m3": round(required_volume, 2),
-                    "deficit_m3": round(deficit, 2),
-                    "equipment_count": equipment_count,
-                    "equipment_list": equipment_names
-                },
-                "location": space['centroid'],
-                "recommendation": f"Augmenter ventilation ou réduire nombre équipements. "
-                                 f"Déficit: {round(deficit, 2)}m³"
-            }
-
-            self.violations.append(violation)
-            logger.rule_violation(self.RULE_ID, space_name,
-                                f"{space_volume:.1f}m³ < {required_volume:.1f}m³ requis")
-        else:
-            logger.rule_passed(self.RULE_ID, space_name)

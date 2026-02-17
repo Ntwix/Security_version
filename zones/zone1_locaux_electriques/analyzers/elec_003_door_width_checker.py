@@ -124,13 +124,14 @@ class ELEC003DoorWidthChecker:
         """Vérifie si équipement peut passer par les portes"""
         eq_name = equipment['name']
 
-        # Dimension équipement
-        if self.check_diagonal:
-            eq_dimension = equipment['diagonal_dimension_m']
-            dimension_type = "diagonale"
-        else:
-            eq_dimension = equipment['max_dimension_m']
-            dimension_type = "maximale"
+        # Dimension équipement : plus petite dimension horizontale (largeur ou profondeur)
+        # Car on peut tourner l'équipement pour passer par son côté le plus étroit
+        bbox_min = equipment['bbox_min']
+        bbox_max = equipment['bbox_max']
+        dx = abs(bbox_max[0] - bbox_min[0])
+        dy = abs(bbox_max[1] - bbox_min[1])
+        eq_dimension = min(dx, dy)
+        dimension_type = "minimale horizontale"
 
         # Marge requise
         margin_m = self.clearance_margin_cm / 100

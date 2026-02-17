@@ -374,12 +374,15 @@ namespace CHU_SecurityAnalyzer.Core
         private double GetDoorDimension(FamilyInstance door, string paramName1, string paramName2,
             BuiltInParameter bip1, BuiltInParameter bip2)
         {
-            // Paramètre instance
+            // Paramètre instance (AsDouble = pieds internes Revit)
             foreach (string pName in new[] { paramName1, paramName2 })
             {
-                string val = GetParamValue(door, pName);
-                if (val != null && double.TryParse(val, out double v) && v > 0)
-                    return v * FEET_TO_METERS;
+                Parameter param = door.LookupParameter(pName);
+                if (param != null && param.HasValue && param.StorageType == StorageType.Double)
+                {
+                    double v = param.AsDouble();
+                    if (v > 0) return v * FEET_TO_METERS;
+                }
             }
 
             // BuiltInParameter
@@ -397,6 +400,15 @@ namespace CHU_SecurityAnalyzer.Core
                 Element doorType = _docArchi.GetElement(typeId);
                 if (doorType != null)
                 {
+                    foreach (string pName in new[] { paramName1, paramName2 })
+                    {
+                        Parameter param = doorType.LookupParameter(pName);
+                        if (param != null && param.HasValue && param.StorageType == StorageType.Double)
+                        {
+                            double v = param.AsDouble();
+                            if (v > 0) return v * FEET_TO_METERS;
+                        }
+                    }
                     foreach (var bip in new[] { bip1, bip2 })
                     {
                         Parameter p = doorType.get_Parameter(bip);

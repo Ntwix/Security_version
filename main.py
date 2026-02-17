@@ -88,13 +88,6 @@ def run_zone1(extracted_data, output_dir, rules, format_choice):
         concerned = identifier.get_spaces_for_rule(space_types, rule)
         logger.info(f"     {rule}: {len(concerned)} espaces concernés")
 
-    # Enrichir poids équipements si manquants
-    for eq in extracted_data['equipment']:
-        if not eq.get('weight_kg'):
-            estimated_weight = identifier.estimate_equipment_weight(eq)
-            if estimated_weight:
-                eq['weight_kg'] = estimated_weight
-
     # Analyse règles
     logger.section_header("ANALYSE RÈGLES DE SÉCURITÉ - ZONE 1")
 
@@ -149,7 +142,10 @@ def run_zone1(extracted_data, output_dir, rules, format_choice):
     if format_choice in ['json', 'both']:
         generator.save_json(str(output_path / 'analysis_results.json'))
     if format_choice in ['excel', 'both']:
-        generator.save_excel(str(output_path / 'analysis_results.xlsx'))
+        try:
+            generator.save_excel(str(output_path / 'analysis_results.xlsx'))
+        except PermissionError:
+            logger.warning("  Impossible d'ecrire le fichier Excel (fichier ouvert ?). JSON sauvegarde.")
 
     generator.print_summary()
 
@@ -504,6 +500,8 @@ def print_banner():
     ==================================================================
     """
     print(banner)
+    
+    
 
 
 if __name__ == "__main__":

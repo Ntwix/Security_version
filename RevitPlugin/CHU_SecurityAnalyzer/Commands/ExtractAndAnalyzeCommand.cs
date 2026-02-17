@@ -1,25 +1,33 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Windows.Forms;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using CHU_SecurityAnalyzer.Core;
+using Color = Autodesk.Revit.DB.Color;
 
 namespace CHU_SecurityAnalyzer.Commands
 {
-    /// <summary>
-    /// Commande principale : Extraction BIM + Analyse Python + Affichage résultats.
-    /// Accessible via le bouton dans le ruban Revit.
-    /// </summary>
     [Transaction(TransactionMode.Manual)]
     public class ExtractAndAnalyzeCommand : IExternalCommand
     {
-        // Chemin vers le projet Python (à configurer)
         private static readonly string PROJECT_DIR = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
             @"CHU_Ibn Sina\4-CODE\zone1_locaux_electriques_v2\zone1_locaux_electriques"
         );
+
+        private const string VIEW_PREFIX = "ZONES RISQUES - ";
+
+        private class VisualizationResult
+        {
+            public int ColoredTotal;
+            public int AnnotationTotal;
+            public int ViewCount;
+            public ViewPlan FirstView;
+        }
 
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
@@ -29,30 +37,30 @@ namespace CHU_SecurityAnalyzer.Commands
 
             try
             {
-                // === Étape 1 : Sélection de la zone ===
+                // === Etape 1 : Selection de la zone ===
                 string zone = ShowZoneSelectionDialog();
                 if (zone == null) return Result.Cancelled;
 
-                // === Étape 2 : Détecter ARCHI et ELEC (peu importe lequel est hôte) ===
+                // === Etape 2 : Detecter ARCHI et ELEC ===
                 Document docArchi = null;
                 Document docElec = null;
                 string statusMsg;
 
                 DetectArchiAndElec(doc, out docArchi, out docElec, out statusMsg);
 
-                // === Étape 3 : Extraction BIM ===
+                // === Etape 3 : Extraction BIM ===
                 TaskDialog.Show("Extraction en cours",
-                    $"{statusMsg}\n\nExtraction des données BIM en cours...\nZone sélectionnée: {zone}");
+                    $"{statusMsg}\n\nExtraction des donnees BIM en cours...\nZone selectionnee: {zone}");
 
                 var extractor = new BIMDataExtractor(docArchi, docElec);
                 ExtractedData data = extractor.ExtractAll();
 
-                // === Étape 4 : Export JSON ===
+                // === Etape 4 : Export JSON ===
                 string pythonExe = PythonBridge.FindPythonExe(PROJECT_DIR);
                 if (pythonExe == null)
                 {
                     TaskDialog.Show("Erreur", "Python introuvable.\n\n" +
-                        "Vérifiez que Python est installé et accessible.\n" +
+                        "Verifiez que Python est installe et accessible.\n" +
                         $"Projet: {PROJECT_DIR}");
                     return Result.Failed;
                 }
@@ -60,57 +68,454 @@ namespace CHU_SecurityAnalyzer.Commands
                 var bridge = new PythonBridge(pythonExe, PROJECT_DIR);
                 string jsonPath = bridge.ExportDataToJson(data);
 
-                // === Étape 5 : Lancer analyse Python ===
+                // === Etape 5 : Lancer analyse Python ===
                 string resultPath = bridge.RunAnalysis(zone, jsonPath);
 
-                // === Étape 6 : Lire résultats ===
+                // === Etape 6 : Lire resultats ===
                 AnalysisResults results = bridge.ReadResults(resultPath);
 
-                // === Étape 7 : Appliquer coloration dans Revit ===
-                int coloredCount = 0;
-                using (Transaction tx = new Transaction(doc, "CHU Security - Coloration violations"))
+                // === Etape 7 : Dupliquer vues + appliquer coloration et symboles ===
+                var vizResult = ApplyVisualizationsToAllViews(doc, uiDoc, results, data);
+
+                // === Etape 8 : Naviguer vers la vue risques + afficher resume ===
+                if (vizResult.FirstView != null)
                 {
-                    tx.Start();
-                    coloredCount = ApplyViolationColors(doc, uiDoc.ActiveView, results, data);
-                    tx.Commit();
+                    try { uiDoc.ActiveView = vizResult.FirstView; }
+                    catch { }
                 }
 
-                // === Étape 8 : Afficher résumé ===
-                int total = results.Metadata?.Statistics?.TotalViolations ?? results.Violations.Count;
-                int critical = results.Metadata?.Statistics?.Critical ?? 0;
-
-                string summary = $"ANALYSE TERMINÉE - Zone {zone}\n\n" +
-                    $"Données extraites:\n" +
-                    $"  - Pièces: {data.Summary.Spaces}\n" +
-                    $"  - Équipements: {data.Summary.Equipment}\n" +
-                    $"  - Portes: {data.Summary.Doors}\n" +
-                    $"  - Dalles: {data.Summary.Slabs}\n\n" +
-                    $"Résultats:\n" +
-                    $"  - Total violations: {total}\n" +
-                    $"  - Critiques: {critical}\n" +
-                    $"  - Éléments colorés: {coloredCount}\n\n" +
-                    $"Rapport: {resultPath}";
-
-                TaskDialog.Show("CHU Security Analyzer", summary);
+                ShowResultsSummary(zone, data, results,
+                    vizResult.ColoredTotal, vizResult.AnnotationTotal,
+                    vizResult.ViewCount, resultPath);
 
                 return Result.Succeeded;
             }
             catch (Exception ex)
             {
                 message = ex.Message;
-                TaskDialog.Show("Erreur", $"Erreur lors de l'analyse:\n\n{ex.Message}");
+                TaskDialog.Show("CHU Security Analyzer - Erreur",
+                    $"Erreur lors de l'analyse:\n\n{ex.Message}\n\n{ex.StackTrace}");
                 return Result.Failed;
             }
         }
 
+        // =====================================================================
+        //  ORCHESTRATION VUES DUPLIQUEES "ZONES RISQUES"
+        // =====================================================================
+
+        private VisualizationResult ApplyVisualizationsToAllViews(
+            Document doc, UIDocument uiDoc,
+            AnalysisResults results, ExtractedData data)
+        {
+            var result = new VisualizationResult();
+
+            if (results.Violations == null || results.Violations.Count == 0)
+                return result;
+
+            // Determiner quels niveaux ont des violations
+            HashSet<double> violationLevels = GetLevelsWithViolations(doc, results, data);
+            if (violationLevels.Count == 0)
+                return result;
+
+            // Collecter les vues en plan eligibles
+            List<ViewPlan> eligibleViews = CollectEligibleFloorPlans(doc);
+            if (eligibleViews.Count == 0)
+                return result;
+
+            int maxAnnotations = 0;
+
+            using (TransactionGroup txGroup = new TransactionGroup(doc, "CHU Security - Zones Risques"))
+            {
+                txGroup.Start();
+
+                // Sous-transaction : creer les styles de ligne (une seule fois)
+                Dictionary<string, GraphicsStyle> lineStyles;
+                using (Transaction txStyles = new Transaction(doc, "CHU Security - Styles de ligne"))
+                {
+                    txStyles.Start();
+                    lineStyles = GetOrCreateLineStyles(doc);
+                    txStyles.Commit();
+                }
+
+                // Pour chaque vue eligible dont le niveau a des violations
+                foreach (ViewPlan originalView in eligibleViews)
+                {
+                    if (originalView.GenLevel == null) continue;
+                    double levelElev = originalView.GenLevel.Elevation;
+
+                    // Verifier si ce niveau a des violations
+                    if (!violationLevels.Contains(levelElev)) continue;
+
+                    using (Transaction txView = new Transaction(doc,
+                        "CHU Security - " + VIEW_PREFIX + originalView.Name))
+                    {
+                        txView.Start();
+                        try
+                        {
+                            // Dupliquer ou reutiliser la vue
+                            ViewPlan riskView = GetOrReuseDuplicatedView(doc, originalView);
+
+                            // Appliquer coloration + symboles sur la vue dupliquee
+                            int colored = ApplyViolationColors(doc, riskView, results, data);
+                            int annotations = PlaceViolationAnnotations(doc, riskView, results, data, lineStyles);
+
+                            result.ColoredTotal += colored;
+                            result.AnnotationTotal += annotations;
+                            result.ViewCount++;
+
+                            // Retenir la vue avec le plus d'annotations
+                            if (annotations > maxAnnotations || result.FirstView == null)
+                            {
+                                maxAnnotations = annotations;
+                                result.FirstView = riskView;
+                            }
+
+                            txView.Commit();
+                        }
+                        catch
+                        {
+                            if (txView.HasStarted() && !txView.HasEnded())
+                                txView.RollBack();
+                        }
+                    }
+                }
+
+                txGroup.Assimilate();
+            }
+
+            return result;
+        }
+
+        // =====================================================================
+        //  COLLECTE DES VUES EN PLAN ELIGIBLES
+        // =====================================================================
+
         /// <summary>
-        /// Dialogue de sélection de zone
+        /// Retourne UNE SEULE vue par niveau pour eviter les doublons.
+        /// Priorite : vue contenant "Distribution" dans le nom, sinon la premiere trouvee.
         /// </summary>
+        private List<ViewPlan> CollectEligibleFloorPlans(Document doc)
+        {
+            var allViews = new List<ViewPlan>();
+
+            var collector = new FilteredElementCollector(doc)
+                .OfClass(typeof(ViewPlan))
+                .WhereElementIsNotElementType();
+
+            foreach (ViewPlan vp in collector)
+            {
+                if (vp.ViewType != ViewType.FloorPlan) continue;
+                if (vp.IsTemplate) continue;
+                if (vp.Name.StartsWith(VIEW_PREFIX)) continue;
+                if (vp.GenLevel == null) continue;
+                allViews.Add(vp);
+            }
+
+            // Grouper par niveau (Level.Id) et garder une seule vue par niveau
+            var byLevel = new Dictionary<int, ViewPlan>();
+            foreach (ViewPlan vp in allViews)
+            {
+                int levelId = vp.GenLevel.Id.IntegerValue;
+
+                if (!byLevel.ContainsKey(levelId))
+                {
+                    // Premiere vue pour ce niveau
+                    byLevel[levelId] = vp;
+                }
+                else
+                {
+                    // Preferer une vue "Distribution" (plus complete pour l'analyse)
+                    string currentName = byLevel[levelId].Name.ToLower();
+                    string newName = vp.Name.ToLower();
+
+                    if (!currentName.Contains("distribution") && newName.Contains("distribution"))
+                    {
+                        byLevel[levelId] = vp;
+                    }
+                }
+            }
+
+            return byLevel.Values.ToList();
+        }
+
+        // =====================================================================
+        //  NIVEAUX AVEC VIOLATIONS
+        // =====================================================================
+
+        private HashSet<double> GetLevelsWithViolations(
+            Document doc, AnalysisResults results, ExtractedData data)
+        {
+            var levelElevations = new HashSet<double>();
+
+            // Collecter tous les niveaux du document
+            var levels = new FilteredElementCollector(doc)
+                .OfClass(typeof(Level))
+                .Cast<Level>()
+                .OrderBy(l => l.Elevation)
+                .ToList();
+
+            foreach (var v in results.Violations)
+            {
+                double[] location = FindSpaceLocation(data, v.SpaceName ?? "");
+                if (location == null || location.Length < 3) continue;
+
+                double zFeet = location[2] / 0.3048;
+
+                // Trouver le niveau correspondant (meme plage que PlaceViolationAnnotations)
+                foreach (var level in levels)
+                {
+                    double levelZ = level.Elevation;
+                    double zMin = levelZ - 1.0;
+                    double zMax = levelZ + 16.4;
+                    if (zFeet >= zMin && zFeet <= zMax)
+                    {
+                        levelElevations.Add(level.Elevation);
+                        break;
+                    }
+                }
+            }
+
+            return levelElevations;
+        }
+
+        // =====================================================================
+        //  DUPLICATION / REUTILISATION DES VUES
+        // =====================================================================
+
+        private ViewPlan GetOrReuseDuplicatedView(Document doc, ViewPlan originalView)
+        {
+            string targetName = VIEW_PREFIX + originalView.Name;
+
+            // Chercher une vue existante avec ce nom
+            var existingViews = new FilteredElementCollector(doc)
+                .OfClass(typeof(ViewPlan))
+                .WhereElementIsNotElementType()
+                .Cast<ViewPlan>()
+                .Where(v => v.Name == targetName)
+                .ToList();
+
+            if (existingViews.Count > 0)
+            {
+                // Reutiliser : nettoyer les annotations existantes
+                ViewPlan existingView = existingViews[0];
+                ClearViewAnnotations(doc, existingView);
+                return existingView;
+            }
+
+            // Dupliquer la vue
+            ElementId newViewId = originalView.Duplicate(ViewDuplicateOption.Duplicate);
+            ViewPlan newView = doc.GetElement(newViewId) as ViewPlan;
+
+            // Renommer
+            try
+            {
+                newView.Name = targetName;
+            }
+            catch (Autodesk.Revit.Exceptions.ArgumentException)
+            {
+                newView.Name = targetName + " (" + DateTime.Now.ToString("HHmmss") + ")";
+            }
+
+            // Assigner au sous-projet "ZONES RISQUES" pour regrouper dans le navigateur
+            AssignViewSubDiscipline(newView);
+
+            return newView;
+        }
+
+        /// <summary>
+        /// Modifie les parametres de la vue dupliquee pour la regrouper
+        /// sous une section dediee dans le navigateur de projet.
+        /// Essaie plusieurs strategies selon la configuration du projet.
+        /// </summary>
+        private void AssignViewSubDiscipline(ViewPlan view)
+        {
+            // === Strategie 1 : Sous-discipline (SUB_DISCIPLINE) ===
+            // C'est le critere de groupement le plus courant dans les projets BIM francais
+            try
+            {
+                Parameter subDisc = view.get_Parameter(BuiltInParameter.VIEWER_VOLUME_OF_INTEREST_CROP);
+                // Essayer le vrai parametre Sous-discipline
+                if (subDisc == null || subDisc.IsReadOnly)
+                {
+                    // Chercher par nom (FR et EN)
+                    subDisc = view.LookupParameter("Sous-discipline");
+                    if (subDisc == null) subDisc = view.LookupParameter("Sub Discipline");
+                    if (subDisc == null) subDisc = view.LookupParameter("Sub-Discipline");
+                }
+                if (subDisc != null && !subDisc.IsReadOnly && subDisc.StorageType == StorageType.String)
+                {
+                    subDisc.Set("ZONES RISQUES");
+                }
+            }
+            catch { }
+
+            // === Strategie 2 : Parametre personnalise utilise pour le tri ===
+            // Les projets CHU utilisent souvent des parametres de classement
+            string[] sortParams = new string[]
+            {
+                "Classement",          // Parametre courant projets FR
+                "Classification",      // Variante
+                "Groupe de vues",      // Groupement explicite
+                "View Group",          // EN
+                "Categorie",           // Autre variante FR
+                "Phase de projet",     // Parfois utilise pour le tri
+            };
+
+            foreach (string paramName in sortParams)
+            {
+                try
+                {
+                    Parameter p = view.LookupParameter(paramName);
+                    if (p != null && !p.IsReadOnly && p.StorageType == StorageType.String)
+                    {
+                        p.Set("ZONES RISQUES");
+                        break; // Un seul suffit
+                    }
+                }
+                catch { }
+            }
+
+            // === Strategie 3 : VIEW_DESCRIPTION (Titre sur feuille) ===
+            // Toujours accessible - sert d'identifiant meme si ne change pas le groupement
+            try
+            {
+                Parameter titleOnSheet = view.get_Parameter(BuiltInParameter.VIEW_DESCRIPTION);
+                if (titleOnSheet != null && !titleOnSheet.IsReadOnly)
+                    titleOnSheet.Set("ZONES RISQUES");
+            }
+            catch { }
+        }
+
+        // =====================================================================
+        //  NETTOYAGE DES VUES EXISTANTES
+        // =====================================================================
+
+        private void ClearViewAnnotations(Document doc, ViewPlan view)
+        {
+            // Supprimer les DetailCurves (symboles dessines)
+            var detailCurves = new FilteredElementCollector(doc, view.Id)
+                .OfClass(typeof(CurveElement))
+                .ToElementIds()
+                .ToList();
+
+            if (detailCurves.Count > 0)
+                doc.Delete(detailCurves);
+
+            // Supprimer les TextNotes (labels)
+            var textNotes = new FilteredElementCollector(doc, view.Id)
+                .OfClass(typeof(TextNote))
+                .ToElementIds()
+                .ToList();
+
+            if (textNotes.Count > 0)
+                doc.Delete(textNotes);
+
+            // Reset les overrides graphiques
+            var allElements = new FilteredElementCollector(doc, view.Id)
+                .WhereElementIsNotElementType()
+                .ToElementIds();
+
+            var defaultOverride = new OverrideGraphicSettings();
+            foreach (ElementId elemId in allElements)
+            {
+                try { view.SetElementOverrides(elemId, defaultOverride); }
+                catch { }
+            }
+        }
+
+        // =====================================================================
+        //  AFFICHAGE RESUME PAR REGLE
+        // =====================================================================
+
+        private void ShowResultsSummary(string zone, ExtractedData data,
+            AnalysisResults results, int coloredCount, int annotationCount,
+            int viewCount, string resultPath)
+        {
+            // Compter violations par regle
+            var byRule = new Dictionary<string, List<ViolationData>>();
+            foreach (var v in results.Violations)
+            {
+                string ruleId = v.RuleId ?? "INCONNU";
+                if (!byRule.ContainsKey(ruleId))
+                    byRule[ruleId] = new List<ViolationData>();
+                byRule[ruleId].Add(v);
+            }
+
+            int total = results.Violations.Count;
+            int critical = results.Violations.Count(v =>
+                v.Severity != null && v.Severity.ToUpper() == "CRITICAL");
+            int important = total - critical;
+
+            // Construire le resume
+            string summary = $"ANALYSE TERMINEE - Zone {zone}\n" +
+                "========================================\n\n" +
+                $"Donnees extraites:\n" +
+                $"  Pieces: {data.Summary.Spaces}\n" +
+                $"  Equipements: {data.Summary.Equipment}\n" +
+                $"  Portes: {data.Summary.Doors}\n" +
+                $"  Dalles: {data.Summary.Slabs}\n\n" +
+                "RESULTATS PAR REGLE:\n" +
+                "----------------------------------------\n";
+
+            // ELEC-001
+            int count001 = byRule.ContainsKey("ELEC-001") ? byRule["ELEC-001"].Count : 0;
+            if (count001 == 0)
+                summary += "\n[ELEC-001] Poids equipements: 0 risque\n" +
+                           "  Les poids ne sont pas renseignes dans la maquette.\n" +
+                           "  Ajouter le parametre 'Poids' aux familles pour activer.\n";
+            else
+                summary += $"\n[ELEC-001] Poids equipements: {count001} violation(s)\n" +
+                           $"  Surcharge dalle detectee dans {count001} local(aux).\n";
+
+            // ELEC-002
+            int count002 = byRule.ContainsKey("ELEC-002") ? byRule["ELEC-002"].Count : 0;
+            if (count002 > 0)
+                summary += $"\n[ELEC-002] Ventilation: {count002} local(aux) technique(s)\n" +
+                           $"  Ventilation requise pour {count002} local(aux) avec equipements.\n";
+            else
+                summary += "\n[ELEC-002] Ventilation: Aucun local technique detecte.\n";
+
+            // ELEC-003
+            int count003 = byRule.ContainsKey("ELEC-003") ? byRule["ELEC-003"].Count : 0;
+            if (count003 > 0)
+                summary += $"\n[ELEC-003] Acces portes: {count003} equipement(s)\n" +
+                           $"  Attention: {count003} equipement(s) ne passent pas par la porte.\n";
+            else
+                summary += "\n[ELEC-003] Acces portes: OK, tous les equipements passent.\n";
+
+            // ELEC-004
+            int count004 = byRule.ContainsKey("ELEC-004") ? byRule["ELEC-004"].Count : 0;
+            if (count004 > 0)
+                summary += $"\n[ELEC-004] Zones humides: {count004} equipement(s)\n" +
+                           $"  {count004} equipement(s) en zone humide a verifier (IP65/inox).\n";
+            else
+                summary += "\n[ELEC-004] Zones humides: OK, aucun equipement en zone humide.\n";
+
+            summary += "\n----------------------------------------\n" +
+                $"Total: {total} violation(s) ({critical} critiques, {important} importantes)\n" +
+                $"Vues \"ZONES RISQUES\" creees: {viewCount}\n" +
+                $"Elements colores: {coloredCount}\n" +
+                $"Symboles places: {annotationCount}\n\n" +
+                "LEGENDE DES SYMBOLES SUR LE PLAN:\n" +
+                "  O  Cercle bleu   = VENTILATION requise (ELEC-002)\n" +
+                "  /\\  Triangle orange = PORTE trop etroite (ELEC-003)\n" +
+                "  <>  Losange rouge  = ZONE HUMIDE IP65 (ELEC-004)\n\n" +
+                "Les vues originales ne sont PAS modifiees.\n" +
+                "Consultez les vues prefixees \"ZONES RISQUES -\" dans le navigateur.\n\n" +
+                $"Rapport: {resultPath}";
+
+            TaskDialog.Show("CHU Security Analyzer - Resultats", summary);
+        }
+
+        // =====================================================================
+        //  SELECTION ZONE
+        // =====================================================================
+
         private string ShowZoneSelectionDialog()
         {
             using (var form = new System.Windows.Forms.Form())
             {
-                form.Text = "CHU Security Analyzer - Sélection Zone";
+                form.Text = "CHU Security Analyzer - Selection Zone";
                 form.Size = new System.Drawing.Size(400, 320);
                 form.StartPosition = FormStartPosition.CenterScreen;
                 form.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -119,7 +524,7 @@ namespace CHU_SecurityAnalyzer.Commands
 
                 var label = new Label
                 {
-                    Text = "Sélectionnez la zone d'analyse :",
+                    Text = "Selectionnez la zone d'analyse :",
                     Location = new System.Drawing.Point(20, 20),
                     Size = new System.Drawing.Size(350, 25),
                     Font = new System.Drawing.Font("Segoe UI", 10, System.Drawing.FontStyle.Bold)
@@ -127,10 +532,10 @@ namespace CHU_SecurityAnalyzer.Commands
 
                 var radioButtons = new RadioButton[]
                 {
-                    new RadioButton { Text = "Zone 1 - Locaux Électriques (ELEC-001 à 004)", Location = new System.Drawing.Point(30, 55), Size = new System.Drawing.Size(330, 25), Checked = true },
-                    new RadioButton { Text = "Zone 2 - Gaines Techniques (GAINE-001 à 005)", Location = new System.Drawing.Point(30, 85), Size = new System.Drawing.Size(330, 25) },
-                    new RadioButton { Text = "Zone 3 - Faux Plafonds Tech. (FPLAF-001 à 003)", Location = new System.Drawing.Point(30, 115), Size = new System.Drawing.Size(330, 25) },
-                    new RadioButton { Text = "Zone 4 - Planchers Techniques (PLAN-001 à 005)", Location = new System.Drawing.Point(30, 145), Size = new System.Drawing.Size(330, 25) },
+                    new RadioButton { Text = "Zone 1 - Locaux Electriques (ELEC-001 a 004)", Location = new System.Drawing.Point(30, 55), Size = new System.Drawing.Size(330, 25), Checked = true },
+                    new RadioButton { Text = "Zone 2 - Gaines Techniques (GAINE-001 a 005)", Location = new System.Drawing.Point(30, 85), Size = new System.Drawing.Size(330, 25) },
+                    new RadioButton { Text = "Zone 3 - Faux Plafonds Tech. (FPLAF-001 a 003)", Location = new System.Drawing.Point(30, 115), Size = new System.Drawing.Size(330, 25) },
+                    new RadioButton { Text = "Zone 4 - Planchers Techniques (PLAN-001 a 005)", Location = new System.Drawing.Point(30, 145), Size = new System.Drawing.Size(330, 25) },
                     new RadioButton { Text = "Toutes les zones", Location = new System.Drawing.Point(30, 175), Size = new System.Drawing.Size(330, 25) }
                 };
 
@@ -173,25 +578,21 @@ namespace CHU_SecurityAnalyzer.Commands
             }
         }
 
-        /// <summary>
-        /// Détecte automatiquement quelle maquette est ARCHI et laquelle est ELEC.
-        /// Fonctionne dans les 2 sens :
-        ///   - ARCHI hôte + ELEC en lien
-        ///   - ELEC hôte + ARCHI en lien (votre configuration actuelle)
-        /// </summary>
+        // =====================================================================
+        //  DETECTION ARCHI / ELEC
+        // =====================================================================
+
         private void DetectArchiAndElec(Document hostDoc, out Document docArchi, out Document docElec, out string statusMsg)
         {
             docArchi = null;
             docElec = null;
             string hostTitle = hostDoc.Title.ToLower();
 
-            // Mots-clés pour identifier les maquettes
             bool hostIsElec = hostTitle.Contains("ele") || hostTitle.Contains("ceg") ||
                               hostTitle.Contains("cfo") || hostTitle.Contains("cfa") ||
                               hostTitle.Contains("elec");
             bool hostIsArchi = hostTitle.Contains("arc") || hostTitle.Contains("archi");
 
-            // Chercher dans les liens
             Document linkedArchi = null;
             Document linkedElec = null;
 
@@ -213,102 +614,418 @@ namespace CHU_SecurityAnalyzer.Commands
                     linkedElec = linkDoc;
             }
 
-            // Cas 1 : ELEC hôte + ARCHI en lien (votre cas)
             if (hostIsElec && linkedArchi != null)
             {
                 docArchi = linkedArchi;
                 docElec = hostDoc;
-                statusMsg = $"Configuration détectée: ELEC hôte + ARCHI en lien\n" +
+                statusMsg = $"Configuration: ELEC hote + ARCHI en lien\n" +
                            $"  ARCHI (lien): {linkedArchi.Title}\n" +
-                           $"  ELEC (hôte): {hostDoc.Title}";
+                           $"  ELEC (hote): {hostDoc.Title}";
                 return;
             }
 
-            // Cas 2 : ARCHI hôte + ELEC en lien
             if ((hostIsArchi || !hostIsElec) && linkedElec != null)
             {
                 docArchi = hostDoc;
                 docElec = linkedElec;
-                statusMsg = $"Configuration détectée: ARCHI hôte + ELEC en lien\n" +
-                           $"  ARCHI (hôte): {hostDoc.Title}\n" +
+                statusMsg = $"Configuration: ARCHI hote + ELEC en lien\n" +
+                           $"  ARCHI (hote): {hostDoc.Title}\n" +
                            $"  ELEC (lien): {linkedElec.Title}";
                 return;
             }
 
-            // Cas 3 : Maquette unique (pas de lien correspondant)
             docArchi = hostDoc;
             docElec = null;
-            statusMsg = $"Maquette unique: {hostDoc.Title}\n(Pas de lien ARCHI/ELEC détecté)";
+            statusMsg = $"Maquette unique: {hostDoc.Title}\n(Pas de lien ARCHI/ELEC detecte)";
         }
 
-        /// <summary>
-        /// Applique la coloration des éléments en violation dans la vue active
-        /// </summary>
+        // =====================================================================
+        //  COLORATION DES EQUIPEMENTS EN VIOLATION
+        // =====================================================================
+
         private int ApplyViolationColors(Document doc, Autodesk.Revit.DB.View view, AnalysisResults results, ExtractedData data)
         {
             int count = 0;
 
-            // Créer les override graphics par sévérité
-            var overrideCritique = new OverrideGraphicSettings();
-            overrideCritique.SetSurfaceForegroundPatternColor(new Color(255, 0, 0)); // Rouge
-            overrideCritique.SetSurfaceForegroundPatternVisible(true);
+            // Rouge = CRITICAL, Orange = IMPORTANT
+            var overrideCritical = new OverrideGraphicSettings();
+            overrideCritical.SetSurfaceForegroundPatternColor(new Color(255, 0, 0));
+            overrideCritical.SetSurfaceForegroundPatternVisible(true);
+            overrideCritical.SetProjectionLineColor(new Color(255, 0, 0));
 
-            var overrideHaute = new OverrideGraphicSettings();
-            overrideHaute.SetSurfaceForegroundPatternColor(new Color(255, 140, 0)); // Orange
+            var overrideImportant = new OverrideGraphicSettings();
+            overrideImportant.SetSurfaceForegroundPatternColor(new Color(255, 140, 0));
+            overrideImportant.SetSurfaceForegroundPatternVisible(true);
+            overrideImportant.SetProjectionLineColor(new Color(255, 140, 0));
 
-            var overrideMoyenne = new OverrideGraphicSettings();
-            overrideMoyenne.SetSurfaceForegroundPatternColor(new Color(255, 255, 0)); // Jaune
-
-            // Trouver un FillPatternElement solide
             FillPatternElement solidPattern = GetSolidFillPattern(doc);
             if (solidPattern != null)
             {
-                overrideCritique.SetSurfaceForegroundPatternId(solidPattern.Id);
-                overrideHaute.SetSurfaceForegroundPatternId(solidPattern.Id);
-                overrideMoyenne.SetSurfaceForegroundPatternId(solidPattern.Id);
+                overrideCritical.SetSurfaceForegroundPatternId(solidPattern.Id);
+                overrideImportant.SetSurfaceForegroundPatternId(solidPattern.Id);
             }
 
-            foreach (var violation in results.Violations)
+            // Construire un index: space_name -> severite la plus haute
+            var spaceSeverity = new Dictionary<string, string>();
+            foreach (var v in results.Violations)
             {
-                // Trouver l'ElementId correspondant au space_name
-                ElementId elemId = FindElementByName(data, violation.SpaceName);
-                if (elemId == null || elemId == ElementId.InvalidElementId) continue;
+                string key = v.SpaceName ?? "";
+                string sev = v.Severity?.ToUpper() ?? "";
+                if (!spaceSeverity.ContainsKey(key) || sev == "CRITICAL")
+                    spaceSeverity[key] = sev;
+            }
 
-                // Appliquer la couleur selon sévérité
-                OverrideGraphicSettings overrideToApply;
-                switch (violation.Severity?.ToUpper())
-                {
-                    case "CRITIQUE":
-                        overrideToApply = overrideCritique;
-                        break;
-                    case "HAUTE":
-                        overrideToApply = overrideHaute;
-                        break;
-                    default:
-                        overrideToApply = overrideMoyenne;
-                        break;
-                }
+            // Construire un index: space_name -> liste d'equipment revit_element_id
+            var spaceEquipmentIds = new Dictionary<string, List<int>>();
+            foreach (var space in data.Spaces)
+            {
+                string sName = space.Name;
+                if (!spaceSeverity.ContainsKey(sName)) continue;
 
-                try
+                var equipIds = new List<int>();
+                double[] sMin = space.BboxMin;
+                double[] sMax = space.BboxMax;
+
+                foreach (var eq in data.Equipment)
                 {
-                    view.SetElementOverrides(elemId, overrideToApply);
-                    count++;
+                    double[] c = eq.Centroid;
+                    if (c[0] >= sMin[0] && c[0] <= sMax[0] &&
+                        c[1] >= sMin[1] && c[1] <= sMax[1] &&
+                        c[2] >= sMin[2] && c[2] <= sMax[2])
+                    {
+                        if (eq.RevitElementId > 0)
+                            equipIds.Add(eq.RevitElementId);
+                    }
                 }
-                catch { }
+                spaceEquipmentIds[sName] = equipIds;
+            }
+
+            // Colorer les equipements (qui sont dans le doc hote ELEC)
+            var coloredElements = new HashSet<int>();
+
+            foreach (var kvp in spaceEquipmentIds)
+            {
+                string spaceName = kvp.Key;
+                string sev = spaceSeverity.ContainsKey(spaceName) ? spaceSeverity[spaceName] : "";
+
+                OverrideGraphicSettings overrideToApply =
+                    (sev == "CRITICAL" || sev == "CRITIQUE") ? overrideCritical : overrideImportant;
+
+                foreach (int eqId in kvp.Value)
+                {
+                    if (coloredElements.Contains(eqId)) continue;
+                    coloredElements.Add(eqId);
+
+                    try
+                    {
+                        ElementId elemId = new ElementId(eqId);
+                        view.SetElementOverrides(elemId, overrideToApply);
+                        count++;
+                    }
+                    catch { }
+                }
             }
 
             return count;
         }
 
-        private ElementId FindElementByName(ExtractedData data, string spaceName)
+        // =====================================================================
+        //  STYLES DE LIGNE COLORES POUR LES SYMBOLES
+        // =====================================================================
+
+        private Dictionary<string, GraphicsStyle> GetOrCreateLineStyles(Document doc)
+        {
+            var styles = new Dictionary<string, GraphicsStyle>();
+
+            // Couleurs par regle
+            var ruleColors = new Dictionary<string, Color>
+            {
+                { "ELEC-002", new Color(0, 100, 255) },    // Bleu
+                { "ELEC-003", new Color(255, 140, 0) },    // Orange
+                { "ELEC-004", new Color(255, 0, 0) }       // Rouge
+            };
+
+            // Chercher la categorie Lines
+            Categories categories = doc.Settings.Categories;
+            Category linesCat = categories.get_Item(BuiltInCategory.OST_Lines);
+
+            foreach (var kvp in ruleColors)
+            {
+                string styleName = "CHU_" + kvp.Key;
+                Color color = kvp.Value;
+
+                // Chercher si le style existe deja
+                GraphicsStyle existing = null;
+                foreach (Category subCat in linesCat.SubCategories)
+                {
+                    if (subCat.Name == styleName)
+                    {
+                        existing = subCat.GetGraphicsStyle(GraphicsStyleType.Projection);
+                        break;
+                    }
+                }
+
+                if (existing != null)
+                {
+                    styles[kvp.Key] = existing;
+                }
+                else
+                {
+                    // Creer une nouvelle sous-categorie de ligne
+                    Category newSubCat = categories.NewSubcategory(linesCat, styleName);
+                    newSubCat.LineColor = color;
+                    newSubCat.SetLineWeight(5, GraphicsStyleType.Projection);
+
+                    GraphicsStyle gs = newSubCat.GetGraphicsStyle(GraphicsStyleType.Projection);
+                    styles[kvp.Key] = gs;
+                }
+            }
+
+            return styles;
+        }
+
+        // =====================================================================
+        //  PLACEMENT DES SYMBOLES DETAILCURVE + TEXTE
+        // =====================================================================
+
+        private const double SYMBOL_SPACING = 4.0; // espacement entre symboles en pieds
+
+        private int PlaceViolationAnnotations(Document doc, Autodesk.Revit.DB.View view,
+            AnalysisResults results, ExtractedData data,
+            Dictionary<string, GraphicsStyle> lineStyles)
+        {
+            int count = 0;
+
+            // Determiner la plage Z de la vue active (en pieds)
+            double viewZMin = double.MinValue;
+            double viewZMax = double.MaxValue;
+
+            ViewPlan viewPlan = view as ViewPlan;
+            if (viewPlan != null && viewPlan.GenLevel != null)
+            {
+                double levelZ = viewPlan.GenLevel.Elevation;
+                viewZMin = levelZ - 1.0;
+                viewZMax = levelZ + 16.4;
+            }
+
+            // Chercher un TextNoteType pour les labels
+            TextNoteType noteType = GetSmallestNoteType(doc);
+
+            // Regrouper violations par espace
+            var violationsBySpace = new Dictionary<string, List<ViolationData>>();
+            foreach (var v in results.Violations)
+            {
+                string key = v.SpaceName ?? "INCONNU";
+                if (!violationsBySpace.ContainsKey(key))
+                    violationsBySpace[key] = new List<ViolationData>();
+                violationsBySpace[key].Add(v);
+            }
+
+            foreach (var kvp in violationsBySpace)
+            {
+                string spaceName = kvp.Key;
+                List<ViolationData> violations = kvp.Value;
+
+                // Trouver les coordonnees de l'espace
+                double[] location = FindSpaceLocation(data, spaceName);
+                if (location == null || location.Length < 3) continue;
+
+                double x = location[0] / 0.3048;
+                double y = location[1] / 0.3048;
+                double z = location[2] / 0.3048;
+
+                if (z < viewZMin || z > viewZMax) continue;
+
+                // Identifier les regles distinctes
+                var rulesInSpace = new HashSet<string>();
+                foreach (var v in violations)
+                {
+                    if (v.RuleId != null) rulesInSpace.Add(v.RuleId);
+                }
+
+                int symbolIndex = 0;
+                foreach (string ruleId in rulesInSpace)
+                {
+                    double offsetX = symbolIndex * SYMBOL_SPACING;
+                    XYZ center = new XYZ(x + offsetX, y, 0);
+
+                    int ruleCount = violations.Count(v => v.RuleId == ruleId);
+                    string label = GetSymbolLabel(ruleId, ruleCount);
+
+                    GraphicsStyle gs = lineStyles.ContainsKey(ruleId) ? lineStyles[ruleId] : null;
+
+                    try
+                    {
+                        // Dessiner le symbole geometrique
+                        double s = 1.5; // taille du symbole en pieds (~45cm)
+
+                        switch (ruleId)
+                        {
+                            case "ELEC-002": // Cercle
+                                DrawCircleSymbol(doc, view, center, s, gs);
+                                break;
+                            case "ELEC-003": // Triangle
+                                DrawTriangleSymbol(doc, view, center, s, gs);
+                                break;
+                            case "ELEC-004": // Losange
+                                DrawDiamondSymbol(doc, view, center, s, gs);
+                                break;
+                        }
+
+                        // Placer le texte a cote
+                        if (noteType != null)
+                        {
+                            XYZ textPt = new XYZ(center.X + s + 0.5, center.Y, 0);
+                            TextNoteOptions opts = new TextNoteOptions();
+                            opts.TypeId = noteType.Id;
+                            opts.HorizontalAlignment = HorizontalTextAlignment.Left;
+                            TextNote.Create(doc, view.Id, textPt, label, opts);
+                        }
+
+                        count++;
+                    }
+                    catch { }
+
+                    symbolIndex++;
+                }
+            }
+
+            return count;
+        }
+
+        // =====================================================================
+        //  DESSIN DES SYMBOLES GEOMETRIQUES (DetailCurve)
+        // =====================================================================
+
+        private void DrawCircleSymbol(Document doc, Autodesk.Revit.DB.View view, XYZ center, double radius, GraphicsStyle gs)
+        {
+            int segments = 16;
+            for (int i = 0; i < segments; i++)
+            {
+                double a1 = 2 * Math.PI * i / segments;
+                double a2 = 2 * Math.PI * (i + 1) / segments;
+                XYZ p1 = new XYZ(center.X + radius * Math.Cos(a1), center.Y + radius * Math.Sin(a1), 0);
+                XYZ p2 = new XYZ(center.X + radius * Math.Cos(a2), center.Y + radius * Math.Sin(a2), 0);
+                DrawLineInView(doc, view, p1, p2, gs);
+            }
+            // Lettre V au centre
+            DrawLineInView(doc, view,
+                new XYZ(center.X - radius * 0.3, center.Y + radius * 0.4, 0),
+                new XYZ(center.X, center.Y - radius * 0.4, 0), gs);
+            DrawLineInView(doc, view,
+                new XYZ(center.X, center.Y - radius * 0.4, 0),
+                new XYZ(center.X + radius * 0.3, center.Y + radius * 0.4, 0), gs);
+        }
+
+        private void DrawTriangleSymbol(Document doc, Autodesk.Revit.DB.View view, XYZ center, double size, GraphicsStyle gs)
+        {
+            double s = size;
+            XYZ top = new XYZ(center.X, center.Y + s, 0);
+            XYZ bottomLeft = new XYZ(center.X - s * 0.866, center.Y - s * 0.5, 0);
+            XYZ bottomRight = new XYZ(center.X + s * 0.866, center.Y - s * 0.5, 0);
+
+            DrawLineInView(doc, view, top, bottomLeft, gs);
+            DrawLineInView(doc, view, bottomLeft, bottomRight, gs);
+            DrawLineInView(doc, view, bottomRight, top, gs);
+
+            // Point d'exclamation
+            DrawLineInView(doc, view,
+                new XYZ(center.X, center.Y + s * 0.4, 0),
+                new XYZ(center.X, center.Y - s * 0.15, 0), gs);
+            DrawLineInView(doc, view,
+                new XYZ(center.X, center.Y - s * 0.25, 0),
+                new XYZ(center.X, center.Y - s * 0.35, 0), gs);
+        }
+
+        private void DrawDiamondSymbol(Document doc, Autodesk.Revit.DB.View view, XYZ center, double size, GraphicsStyle gs)
+        {
+            double s = size;
+            XYZ top = new XYZ(center.X, center.Y + s, 0);
+            XYZ right = new XYZ(center.X + s, center.Y, 0);
+            XYZ bottom = new XYZ(center.X, center.Y - s, 0);
+            XYZ left = new XYZ(center.X - s, center.Y, 0);
+
+            DrawLineInView(doc, view, top, right, gs);
+            DrawLineInView(doc, view, right, bottom, gs);
+            DrawLineInView(doc, view, bottom, left, gs);
+            DrawLineInView(doc, view, left, top, gs);
+
+            // Point d'exclamation
+            DrawLineInView(doc, view,
+                new XYZ(center.X, center.Y + s * 0.5, 0),
+                new XYZ(center.X, center.Y - s * 0.2, 0), gs);
+            DrawLineInView(doc, view,
+                new XYZ(center.X, center.Y - s * 0.35, 0),
+                new XYZ(center.X, center.Y - s * 0.45, 0), gs);
+        }
+
+        private void DrawLineInView(Document doc, Autodesk.Revit.DB.View view, XYZ start, XYZ end, GraphicsStyle gs)
+        {
+            Line line = Line.CreateBound(start, end);
+            DetailCurve dc = doc.Create.NewDetailCurve(view, line);
+            if (gs != null)
+            {
+                dc.LineStyle = gs;
+            }
+        }
+
+        // =====================================================================
+        //  LABELS DES SYMBOLES
+        // =====================================================================
+
+        private string GetSymbolLabel(string ruleId, int count)
+        {
+            switch (ruleId)
+            {
+                case "ELEC-002":
+                    return "VENTILATION";
+                case "ELEC-003":
+                    return "PORTE (" + count + ")";
+                case "ELEC-004":
+                    return "IP65 (" + count + ")";
+                default:
+                    return ruleId;
+            }
+        }
+
+        private double[] FindSpaceLocation(ExtractedData data, string spaceName)
         {
             foreach (var space in data.Spaces)
             {
-                if (space.Name == spaceName && space.RevitElementId > 0)
-                    return new ElementId(space.RevitElementId);
+                if (space.Name == spaceName)
+                    return space.Centroid;
             }
-            return ElementId.InvalidElementId;
+            return null;
         }
+
+        private TextNoteType GetSmallestNoteType(Document doc)
+        {
+            var collector = new FilteredElementCollector(doc)
+                .OfClass(typeof(TextNoteType));
+
+            TextNoteType smallest = null;
+            double smallestSize = double.MaxValue;
+
+            foreach (TextNoteType tnt in collector)
+            {
+                Parameter textSize = tnt.get_Parameter(BuiltInParameter.TEXT_SIZE);
+                if (textSize != null && textSize.HasValue)
+                {
+                    double size = textSize.AsDouble();
+                    if (size < smallestSize)
+                    {
+                        smallestSize = size;
+                        smallest = tnt;
+                    }
+                }
+            }
+
+            return smallest;
+        }
+
+        // =====================================================================
+        //  UTILITAIRES
+        // =====================================================================
 
         private FillPatternElement GetSolidFillPattern(Document doc)
         {

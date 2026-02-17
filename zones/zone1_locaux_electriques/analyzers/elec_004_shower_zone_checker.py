@@ -1,9 +1,11 @@
 """
 ============================================================================
-ELEC-004 - Zones Humides - Protection IP65 Requise
+ELEC-004 - Zones Humides - Équipements Électriques
 ============================================================================
-Règle: Les équipements électriques en zones humides (douches, salles de bain)
-doivent avoir protection IP65 et être en inox.
+Règle: Signaler la présence d'équipements électriques dans les zones humides
+(salles de bain, douches, sanitaires, cuisines, laveries).
+
+Ces équipements nécessitent une protection IP65 et matériau inox.
 """
 
 import json
@@ -65,7 +67,7 @@ class ELEC004ShowerZoneChecker:
             logger.info(f"    Aucune zone humide identifiée pour {self.RULE_ID}")
             return self.violations
 
-        logger.info(f"   Analyse {len(wet_rooms)} zones humides (salles de bain, cuisines, laveries)...")
+        logger.info(f"   Analyse {len(wet_rooms)} zones humides...")
 
         for space in wet_rooms:
             self._analyze_space(space, equipment)
@@ -98,10 +100,22 @@ class ELEC004ShowerZoneChecker:
 
         return space_equipment
 
+    def _props_to_dict(self, properties) -> Dict:
+        """Convertit properties (liste de {Key, Value} ou dict) en dict"""
+        if isinstance(properties, dict):
+            return properties
+        if isinstance(properties, list):
+            result = {}
+            for item in properties:
+                if isinstance(item, dict) and 'Key' in item:
+                    result[item['Key']] = item.get('Value', '')
+            return result
+        return {}
+
     def _check_equipment_protection(self, space: Dict, equipment: Dict):
         """Vérifie protection équipement en zone humide"""
         eq_name = equipment['name']
-        properties = equipment.get('properties', {})
+        properties = self._props_to_dict(equipment.get('properties', []))
 
         # Vérifier IP rating
         ip_rating = self._extract_ip_rating(properties)
@@ -115,28 +129,28 @@ class ELEC004ShowerZoneChecker:
         if not has_correct_ip or not has_correct_material:
             issues = []
             if not has_correct_ip:
-                issues.append(f"Protection IP insuffisante ({ip_rating or 'non spécifiée'})")
+                issues.append(f"Protection IP insuffisante ({ip_rating or 'non renseignée'})")
             if not has_correct_material:
-                issues.append(f"Matériau incorrect ({material or 'non spécifié'})")
+                issues.append(f"Matériau non vérifié ({material or 'non renseigné'})")
 
             violation = {
                 "rule_id": self.RULE_ID,
                 "severity": "CRITICAL",
                 "space_name": space['name'],
                 "space_global_id": space['global_id'],
-                "description": "Équipement non conforme en zone humide",
+                "description": "Équipement en zone humide - vérifier conformité",
                 "details": {
                     "equipment_name": eq_name,
                     "equipment_type": equipment['ifc_type'],
-                    "current_ip_rating": ip_rating or "non spécifiée",
+                    "current_ip_rating": ip_rating or "non renseignée",
                     "required_ip_rating": self.required_ip_rating,
-                    "current_material": material or "non spécifié",
+                    "current_material": material or "non renseigné",
                     "required_material": self.required_material,
                     "issues": issues
                 },
                 "location": equipment['centroid'],
-                "recommendation": f"Remplacer par équipement {self.required_ip_rating} en {self.required_material}. "
-                                 f"Problèmes: {', '.join(issues)}"
+                "recommendation": f"Vérifier que cet équipement est {self.required_ip_rating} en {self.required_material}. "
+                                 f"{', '.join(issues)}"
             }
 
             self.violations.append(violation)
@@ -147,7 +161,8 @@ class ELEC004ShowerZoneChecker:
 
     def _extract_ip_rating(self, properties: Dict) -> str:
         """Extrait protection IP depuis propriétés"""
-        ip_keys = ['IPRating', 'IP_Rating', 'Protection', 'ProtectionIndex']
+        ip_keys = ['IPRating', 'IP_Rating', 'Protection', 'ProtectionIndex',
+                    'IP', 'Indice de protection', 'IndiceProtection']
 
         for key in ip_keys:
             if key in properties:
@@ -160,9 +175,7 @@ class ELEC004ShowerZoneChecker:
         if not ip_rating:
             return False
 
-        # Extraire chiffres
         try:
-            # Exemple: "IP65" -> 65
             match = re.search(r'IP(\d{2})', ip_rating.upper())
             if match:
                 rating_value = int(match.group(1))
@@ -175,7 +188,8 @@ class ELEC004ShowerZoneChecker:
 
     def _extract_material(self, properties: Dict) -> str:
         """Extrait matériau depuis propriétés"""
-        material_keys = ['Material', 'Materiau', 'Matériau', 'FinishMaterial']
+        material_keys = ['Material', 'Materiau', 'Matériau', 'FinishMaterial',
+                         'Matiere', 'Matière']
 
         for key in material_keys:
             if key in properties:

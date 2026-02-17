@@ -92,6 +92,7 @@ class FPlafIdentifier:
                     return cat_key
 
         # 4. IFC space type
+        
         combined_ifc = f"{object_type} {space_data.get('predefined_type', '')} {space_data.get('ifc_type', '')}".lower()
         for cat_key, cat_config in self.categories.items():
             ifc_types = cat_config.get('ifc_space_types', [])
@@ -101,6 +102,7 @@ class FPlafIdentifier:
                     return cat_key
 
         # 5. Regex patterns
+        
         regex_patterns = self.config.get('regex_patterns', {})
         if regex_patterns.get('faux_plafond_pattern') and re.search(regex_patterns['faux_plafond_pattern'], full_text):
             return 'faux_plafond'
