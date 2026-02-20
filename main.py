@@ -210,7 +210,8 @@ def run_zone2(extracted_data, output_dir, rules, format_choice):
         checker = GAINE003TrappesAccesChecker()
         violations_by_rule['GAINE-003'] = checker.analyze(
             extracted_data['spaces'], extracted_data['equipment'],
-            extracted_data['slabs'], gaine_types
+            extracted_data['slabs'], gaine_types,
+            doors=extracted_data.get('doors', [])
         )
         
     if 'GAINE-004' in rules_to_analyze:

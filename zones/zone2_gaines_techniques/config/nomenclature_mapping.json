@@ -68,18 +68,16 @@
   "equipment_categories": {
     "courant_fort": {
       "description": "Équipements courant fort (puissance)",
-      "keywords": ["cf", "courant fort", "power", "puissance", "force", "ht", "bt", "tgbt", "transfo"],
+      "keywords": ["cfo", "cdc cfo", "courant fort", "power", "puissance", "force", "ht", "bt", "tgbt", "transfo", "td-"],
       "ifc_types": [
         "IfcElectricDistributionBoard",
         "IfcTransformer",
-        "IfcElectricGenerator",
-        "IfcCableCarrierSegment",
-        "IfcCableSegment"
+        "IfcElectricGenerator"
       ]
     },
     "courant_faible": {
       "description": "Équipements courant faible (données, communication)",
-      "keywords": ["cfa", "courant faible", "data", "vdi", "rj45", "fibre", "tel", "video", "alarme", "détection"],
+      "keywords": ["cfa", "cdc cfa", "cdc incendie", "courant faible", "data", "vdi", "rj45", "fibre", "tel", "video", "alarme", "détection"],
       "ifc_types": [
         "IfcCommunicationsAppliance",
         "IfcAudioVisualAppliance",
@@ -89,7 +87,7 @@
     },
     "support_cables": {
       "description": "Supports et chemins de câbles",
-      "keywords": ["chemin de câbles", "support", "échelle à câbles", "goulotte", "tablette", "rail"],
+      "keywords": ["chemin de câbles", "chemin de cables", "support", "échelle à câbles", "goulotte", "tablette", "rail", "pfu"],
       "ifc_types": [
         "IfcCableCarrierFitting",
         "IfcCableCarrierSegment",
@@ -100,7 +98,7 @@
 
   "regex_patterns": {
     "gaine_pattern": "(?i)(g\\.?t\\.?|gaine|shaft|riser|trémie|colonne\\s*(montante|technique))",
-    "courant_fort_pattern": "(?i)(courant\\s*fort|cf|power|puissance|force|tgbt|transfo)",
-    "courant_faible_pattern": "(?i)(courant\\s*faible|cfa|data|vdi|rj45|fibre|télécom|alarme)"
+    "courant_fort_pattern": "(?i)(courant\\s*fort|cfo|cdc\\s*cfo|power|puissance|force|tgbt|transfo)",
+    "courant_faible_pattern": "(?i)(courant\\s*faible|cfa|cdc\\s*cfa|cdc\\s*incendie|data|vdi|rj45|fibre|télécom|alarme)"
   }
 }

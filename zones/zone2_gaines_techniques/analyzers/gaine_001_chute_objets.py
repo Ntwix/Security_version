@@ -106,6 +106,19 @@ class GAINE001ChuteObjetsChecker:
         else:
             logger.rule_passed(self.RULE_ID, gaine_name)
 
+    @staticmethod
+    def _props_to_dict(props) -> Dict:
+        """Convertit les propriétés en dict (gère le format list de DataContractJsonSerializer)."""
+        if isinstance(props, dict):
+            return props
+        if isinstance(props, list):
+            result = {}
+            for item in props:
+                if isinstance(item, dict) and 'Key' in item:
+                    result[item['Key']] = item.get('Value', '')
+            return result
+        return {}
+
     def _find_fall_protection(self, gaine: Dict, equipment: List[Dict]) -> bool:
         """
         Vérifie si une protection anti-chute existe dans/autour de la gaine.
@@ -137,8 +150,9 @@ class GAINE001ChuteObjetsChecker:
                 if ptype.lower() in eq_name:
                     return True
 
-            # Vérifier dans les propriétés
-            for key, value in eq_props.items():
+            # Vérifier dans les propriétés (gérer format list ou dict)
+            props_dict = self._props_to_dict(eq_props)
+            for key, value in props_dict.items():
                 if value and any(ptype.lower() in str(value).lower() for ptype in self.protection_types):
                     return True
 

@@ -52,11 +52,18 @@ class GAINE003TrappesAccesChecker:
             self.max_distance = 2.0
 
     def analyze(self, spaces: List[Dict], equipment: List[Dict],
-                slabs: List[Dict], space_types: Dict) -> List[Dict]:
-        """Lance analyse GAINE-003"""
+                slabs: List[Dict], space_types: Dict,
+                doors: List[Dict] = None) -> List[Dict]:
+        """Lance analyse GAINE-003
+
+        Args:
+            doors: Liste des portes extraites (IfcDoor). Les trappes d'accès
+                   sont souvent modélisées comme des portes dans le modèle ARCHI.
+        """
         logger.analysis_start(self.RULE_ID)
 
         self.violations = []
+        self.doors = doors or []
 
         # Espaces gaine technique
         gaines = space_types.get('gaine_technique', [])
@@ -66,6 +73,7 @@ class GAINE003TrappesAccesChecker:
             return self.violations
 
         logger.info(f"   Analyse {len(gaines)} gaines techniques pour trappes d'accès...")
+        logger.info(f"   {len(self.doors)} portes disponibles pour recherche de trappes")
 
         for gaine in gaines:
             self._analyze_gaine(gaine, equipment)
@@ -129,39 +137,59 @@ class GAINE003TrappesAccesChecker:
         else:
             logger.rule_passed(self.RULE_ID, gaine_name)
 
+    def _is_in_range(self, centroid, bbox_min, bbox_max, tolerance) -> bool:
+        """Vérifie si un point est dans la bbox étendue par la tolérance"""
+        return (
+            bbox_min[0] - tolerance <= centroid[0] <= bbox_max[0] + tolerance and
+            bbox_min[1] - tolerance <= centroid[1] <= bbox_max[1] + tolerance and
+            bbox_min[2] - tolerance <= centroid[2] <= bbox_max[2] + tolerance
+        )
+
     def _find_trappes_nearby(self, gaine: Dict, equipment: List[Dict]) -> bool:
-        """Cherche des trappes d'accès à proximité de la gaine"""
+        """Cherche des trappes d'accès à proximité de la gaine.
+
+        Cherche dans deux sources :
+        1. Les équipements (nommés trappe/hatch/access/panneau/visite)
+        2. Les portes du modèle ARCHI (les trappes sont souvent modélisées comme IfcDoor)
+        """
         bbox_min = gaine.get('bbox_min', (0, 0, 0))
         bbox_max = gaine.get('bbox_max', (0, 0, 0))
         tolerance = self.max_distance
 
         trappe_keywords = ['trappe', 'hatch', 'access', 'panneau', 'visite']
 
+        # 1. Chercher dans les équipements
         for eq in equipment:
-            eq_name = eq.get('name', '').lower()
             eq_centroid = eq.get('centroid', (0, 0, 0))
-
-            # Vérifier proximité
-            in_range = (
-                bbox_min[0] - tolerance <= eq_centroid[0] <= bbox_max[0] + tolerance and
-                bbox_min[1] - tolerance <= eq_centroid[1] <= bbox_max[1] + tolerance and
-                bbox_min[2] - tolerance <= eq_centroid[2] <= bbox_max[2] + tolerance
-            )
-
-            if not in_range:
+            if not self._is_in_range(eq_centroid, bbox_min, bbox_max, tolerance):
                 continue
 
-            # Vérifier si c'est une trappe
+            eq_name = eq.get('name', '').lower()
             if any(kw in eq_name for kw in trappe_keywords):
                 return True
 
-            # Vérifier type IFC
             ifc_type = eq.get('ifc_type', '')
             if 'Door' in ifc_type or 'Opening' in ifc_type:
-                # Vérifier dimensions
                 width = (eq.get('width_m') or 0) or (eq.get('max_dimension_m') or 0)
                 if width >= self.min_trappe_width:
                     return True
+
+        # 2. Chercher dans les portes du modèle ARCHI
+        for door in self.doors:
+            door_centroid = door.get('centroid', (0, 0, 0))
+            if not self._is_in_range(door_centroid, bbox_min, bbox_max, tolerance):
+                continue
+
+            door_name = door.get('name', '').lower()
+            door_width = door.get('width_m') or 0
+
+            # Porte nommée comme trappe
+            if any(kw in door_name for kw in trappe_keywords):
+                return True
+
+            # Porte à proximité directe de la gaine avec dimensions suffisantes
+            if door_width >= self.min_trappe_width:
+                return True
 
         return False
 

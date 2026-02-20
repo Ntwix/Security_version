@@ -78,18 +78,37 @@ class GAINE002CroisementReseauxChecker:
         return self.violations
 
     def _classify_equipment(self, eq: Dict) -> str:
-        """Classifie un équipement comme courant_fort, courant_faible ou autre"""
+        """Classifie un équipement comme courant_fort, courant_faible ou autre.
+
+        Ordre important : tester CFA d'abord (plus spécifique) car 'cf' est
+        un sous-ensemble de 'cfa' et matcherait à tort les équipements CFA.
+        Ensuite classifier par type IFC en fallback.
+        """
         name = eq.get('name', '').lower()
-        ifc_type = eq.get('ifc_type', '').lower()
-        combined = f"{name} {ifc_type}"
+        ifc_type = eq.get('ifc_type', '')
+        combined = f"{name} {ifc_type}".lower()
+
+        # CFA d'abord (plus spécifique, évite que 'cf' matche 'cfa')
+        for kw in self.cfa_keywords:
+            if kw.lower() in combined:
+                return 'courant_faible'
 
         for kw in self.cf_keywords:
             if kw.lower() in combined:
                 return 'courant_fort'
 
-        for kw in self.cfa_keywords:
-            if kw.lower() in combined:
+        # Fallback par type IFC
+        cfa_ifc_types = ['IfcCommunicationsAppliance', 'IfcAudioVisualAppliance',
+                         'IfcAlarm', 'IfcSensor']
+        cf_ifc_types = ['IfcElectricDistributionBoard', 'IfcTransformer',
+                        'IfcElectricGenerator']
+
+        for t in cfa_ifc_types:
+            if t in ifc_type:
                 return 'courant_faible'
+        for t in cf_ifc_types:
+            if t in ifc_type:
+                return 'courant_fort'
 
         return 'autre'
 

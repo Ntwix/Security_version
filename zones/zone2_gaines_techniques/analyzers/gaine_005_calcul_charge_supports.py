@@ -16,16 +16,16 @@ from shared.logger import logger
 from shared.geometry_utils import GeometryUtils
 
 DEFAULT_SUPPORT_KEYWORDS = [
-    "chemin de cables", "support", "echelle a cables", "goulotte",
-    "tablette", "rail", "cable tray", "ladder"
+    "chemin de cables", "chemin de câbles", "support", "echelle a cables", "goulotte",
+    "tablette", "rail", "cable tray", "ladder", "pfu"
 ]
 DEFAULT_SUPPORT_IFC_TYPES = [
     "IfcCableCarrierSegment", "IfcCableCarrierFitting", "IfcDiscreteAccessory"
 ]
-DEFAULT_CABLE_KEYWORDS = ["cable", "fil", "conducteur", "wire"]
+DEFAULT_CABLE_KEYWORDS = ["cable", "câble", "fil", "conducteur", "wire", "cdc"]
 DEFAULT_CABLE_IFC_TYPES = ["IfcCableSegment", "IfcCableFitting"]
-DEFAULT_CF_KEYWORDS = ["courant fort", "cf", "power", "puissance", "ht", "bt", "tgbt"]
-DEFAULT_CFA_KEYWORDS = ["courant faible", "cfa", "data", "vdi", "rj45", "fibre", "fiber"]
+DEFAULT_CF_KEYWORDS = ["courant fort", "cfo", "cdc cfo", "power", "puissance", "ht", "bt", "tgbt"]
+DEFAULT_CFA_KEYWORDS = ["courant faible", "cfa", "cdc cfa", "cdc incendie", "data", "vdi", "rj45", "fibre", "fiber"]
 DEFAULT_LENGTH_KEYS = ["Length", "Longueur", "Length_m", "Longueur_m"]
 DEFAULT_WEIGHT_KEYS = ["Weight", "Poids", "Masse"]
 
@@ -203,8 +203,21 @@ class GAINE005CalculChargeSupportsChecker:
 
         return total_weight, total_length, count
 
+    @staticmethod
+    def _props_to_dict(props) -> Dict:
+        """Convertit les propriétés en dict (gère le format list de DataContractJsonSerializer)."""
+        if isinstance(props, dict):
+            return props
+        if isinstance(props, list):
+            result = {}
+            for item in props:
+                if isinstance(item, dict) and 'Key' in item:
+                    result[item['Key']] = item.get('Value', '')
+            return result
+        return {}
+
     def _extract_length(self, cable: Dict) -> float:
-        props = cable.get('properties', {})
+        props = self._props_to_dict(cable.get('properties', {}))
         for key in self.length_keys:
             if key in props:
                 value = self._safe_float(props[key])
@@ -214,7 +227,7 @@ class GAINE005CalculChargeSupportsChecker:
         return fallback if fallback else 1.0
 
     def _extract_weight(self, cable: Dict) -> Optional[float]:
-        props = cable.get('properties', {})
+        props = self._props_to_dict(cable.get('properties', {}))
         for key in self.weight_keys:
             if key in props:
                 value = self._safe_float(props[key])
@@ -224,12 +237,13 @@ class GAINE005CalculChargeSupportsChecker:
 
     def _select_weight_per_meter(self, cable: Dict) -> float:
         combined = f"{cable.get('name', '')} {cable.get('ifc_type', '')}".lower()
-        for kw in self.cf_keywords:
-            if kw in combined:
-                return self.cf_weight_per_m
+        # CFA d'abord (plus spécifique, évite que 'cf' matche 'cfa')
         for kw in self.cfa_keywords:
             if kw in combined:
                 return self.cfa_weight_per_m
+        for kw in self.cf_keywords:
+            if kw in combined:
+                return self.cf_weight_per_m
         return self.default_weight_per_m
 
     def _is_support(self, equipment: Dict) -> bool:
@@ -248,12 +262,13 @@ class GAINE005CalculChargeSupportsChecker:
             return True
         return False
 
-    def _extract_capacity(self, properties: Dict) -> Optional[float]:
+    def _extract_capacity(self, properties) -> Optional[float]:
+        props = self._props_to_dict(properties)
         capacity_keys = ['LoadCapacity', 'ChargeAdmissible', 'MaxLoad',
                          'Capacite', 'Capacity', 'ChargeMax']
         for key in capacity_keys:
-            if key in properties:
-                value = self._safe_float(properties[key])
+            if key in props:
+                value = self._safe_float(props[key])
                 if value and value > 0:
                     return value
         return None

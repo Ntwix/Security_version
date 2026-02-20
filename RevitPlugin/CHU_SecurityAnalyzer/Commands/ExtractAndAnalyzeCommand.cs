@@ -5,6 +5,7 @@ using System.Linq;
 using System.Windows.Forms;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Structure;
 using Autodesk.Revit.UI;
 using CHU_SecurityAnalyzer.Core;
 using Color = Autodesk.Revit.DB.Color;
@@ -20,6 +21,8 @@ namespace CHU_SecurityAnalyzer.Commands
         );
 
         private const string VIEW_PREFIX = "ZONES RISQUES - ";
+        private const string RISK_FAMILY_RFA = "Famille_TEST.rfa";
+        private const string RISK_FAMILY_NAME = "Famille_TEST";
 
         private class VisualizationResult
         {
@@ -128,12 +131,77 @@ namespace CHU_SecurityAnalyzer.Commands
             {
                 txGroup.Start();
 
-                // Sous-transaction : creer les styles de ligne (une seule fois)
+                // Sous-transaction : creer les styles de ligne + charger famille (une seule fois)
+                // + nettoyer TOUTES les anciennes instances de famille risque dans le projet
                 Dictionary<string, GraphicsStyle> lineStyles;
-                using (Transaction txStyles = new Transaction(doc, "CHU Security - Styles de ligne"))
+                FamilySymbol riskSymbol = null;
+                using (Transaction txStyles = new Transaction(doc, "CHU Security - Styles et famille"))
                 {
                     txStyles.Start();
                     lineStyles = GetOrCreateLineStyles(doc);
+                    riskSymbol = LoadOrGetRiskFamily(doc);
+
+                    // Supprimer toutes les anciennes instances de famille risque (elements de modele)
+                    var oldRiskInstances = new FilteredElementCollector(doc)
+                        .OfClass(typeof(FamilyInstance))
+                        .Cast<FamilyInstance>()
+                        .Where(fi => fi.Symbol.FamilyName == RISK_FAMILY_NAME
+                                  || fi.Symbol.FamilyName.Contains("Famille_TEST")
+                                  || fi.Symbol.FamilyName.Contains("renamed"))
+                        .Select(fi => fi.Id)
+                        .ToList();
+                    if (oldRiskInstances.Count > 0)
+                        doc.Delete(oldRiskInstances);
+
+                    // Placer les familles 3D ELEC-002 une seule fois par espace
+                    if (riskSymbol != null)
+                    {
+                        var levels = new FilteredElementCollector(doc)
+                            .OfClass(typeof(Level))
+                            .Cast<Level>()
+                            .OrderBy(l => l.Elevation)
+                            .ToList();
+
+                        var placedSpaces = new HashSet<string>();
+                        foreach (var v in results.Violations)
+                        {
+                            if (v.RuleId != "ELEC-002") continue;
+                            // Cle unique par global_id pour eviter les doublons
+                            string spaceKey = v.SpaceGlobalId ?? v.SpaceName ?? "";
+                            if (string.IsNullOrEmpty(spaceKey) || placedSpaces.Contains(spaceKey)) continue;
+                            placedSpaces.Add(spaceKey);
+
+                            double[] loc = FindSpaceLocation(data, v.SpaceName ?? "");
+                            if (loc == null || loc.Length < 3) continue;
+
+                            double xFt = loc[0] / 0.3048;
+                            double yFt = loc[1] / 0.3048;
+                            double zFt = loc[2] / 0.3048;
+
+                            // Trouver le niveau le plus proche
+                            Level bestLevel = null;
+                            double bestDist = double.MaxValue;
+                            foreach (var lvl in levels)
+                            {
+                                double dist = Math.Abs(lvl.Elevation - zFt);
+                                if (dist < bestDist)
+                                {
+                                    bestDist = dist;
+                                    bestLevel = lvl;
+                                }
+                            }
+
+                            if (bestLevel != null)
+                            {
+                                // Z = 0 car NewFamilyInstance avec Level place au niveau automatiquement
+                                XYZ pt = new XYZ(xFt, yFt, 0);
+                                doc.Create.NewFamilyInstance(
+                                    pt, riskSymbol, bestLevel,
+                                    StructuralType.NonStructural);
+                            }
+                        }
+                    }
+
                     txStyles.Commit();
                 }
 
@@ -157,7 +225,7 @@ namespace CHU_SecurityAnalyzer.Commands
 
                             // Appliquer coloration + symboles sur la vue dupliquee
                             int colored = ApplyViolationColors(doc, riskView, results, data);
-                            int annotations = PlaceViolationAnnotations(doc, riskView, results, data, lineStyles);
+                            int annotations = PlaceViolationAnnotations(doc, riskView, results, data, lineStyles, riskSymbol);
 
                             result.ColoredTotal += colored;
                             result.AnnotationTotal += annotations;
@@ -410,6 +478,20 @@ namespace CHU_SecurityAnalyzer.Commands
             if (textNotes.Count > 0)
                 doc.Delete(textNotes);
 
+            // Supprimer les instances de la famille de risque (dans tout le document,
+            // car ce sont des elements de modele, pas des elements de vue)
+            var riskInstances = new FilteredElementCollector(doc)
+                .OfClass(typeof(FamilyInstance))
+                .Cast<FamilyInstance>()
+                .Where(fi => fi.Symbol.FamilyName == RISK_FAMILY_NAME
+                          || fi.Symbol.FamilyName.Contains("Famille_TEST")
+                          || fi.Symbol.FamilyName.Contains("renamed"))
+                .Select(fi => fi.Id)
+                .ToList();
+
+            if (riskInstances.Count > 0)
+                doc.Delete(riskInstances);
+
             // Reset les overrides graphiques
             var allElements = new FilteredElementCollector(doc, view.Id)
                 .WhereElementIsNotElementType()
@@ -443,8 +525,10 @@ namespace CHU_SecurityAnalyzer.Commands
 
             int total = results.Violations.Count;
             int critical = results.Violations.Count(v =>
-                v.Severity != null && v.Severity.ToUpper() == "CRITICAL");
-            int important = total - critical;
+                v.Severity != null && (v.Severity.ToUpper() == "CRITICAL" || v.Severity.ToUpper() == "CRITIQUE"));
+            int haute = results.Violations.Count(v =>
+                v.Severity != null && v.Severity.ToUpper() == "HAUTE");
+            int other = total - critical - haute;
 
             // Construire le resume
             string summary = $"ANALYSE TERMINEE - Zone {zone}\n" +
@@ -457,50 +541,52 @@ namespace CHU_SecurityAnalyzer.Commands
                 "RESULTATS PAR REGLE:\n" +
                 "----------------------------------------\n";
 
-            // ELEC-001
-            int count001 = byRule.ContainsKey("ELEC-001") ? byRule["ELEC-001"].Count : 0;
-            if (count001 == 0)
-                summary += "\n[ELEC-001] Poids equipements: 0 risque\n" +
-                           "  Les poids ne sont pas renseignes dans la maquette.\n" +
-                           "  Ajouter le parametre 'Poids' aux familles pour activer.\n";
-            else
-                summary += $"\n[ELEC-001] Poids equipements: {count001} violation(s)\n" +
-                           $"  Surcharge dalle detectee dans {count001} local(aux).\n";
+            // Noms descriptifs des regles
+            var ruleNames = new Dictionary<string, string>
+            {
+                { "ELEC-001", "Poids equipements" },
+                { "ELEC-002", "Ventilation" },
+                { "ELEC-003", "Acces portes" },
+                { "ELEC-004", "Zones humides IP65" },
+                { "GAINE-001", "Chute objets" },
+                { "GAINE-002", "Croisement CF/CFA" },
+                { "GAINE-003", "Trappes acces" },
+                { "GAINE-004", "Surcharge supports" },
+                { "GAINE-005", "Calcul charge supports" }
+            };
 
-            // ELEC-002
-            int count002 = byRule.ContainsKey("ELEC-002") ? byRule["ELEC-002"].Count : 0;
-            if (count002 > 0)
-                summary += $"\n[ELEC-002] Ventilation: {count002} local(aux) technique(s)\n" +
-                           $"  Ventilation requise pour {count002} local(aux) avec equipements.\n";
-            else
-                summary += "\n[ELEC-002] Ventilation: Aucun local technique detecte.\n";
-
-            // ELEC-003
-            int count003 = byRule.ContainsKey("ELEC-003") ? byRule["ELEC-003"].Count : 0;
-            if (count003 > 0)
-                summary += $"\n[ELEC-003] Acces portes: {count003} equipement(s)\n" +
-                           $"  Attention: {count003} equipement(s) ne passent pas par la porte.\n";
-            else
-                summary += "\n[ELEC-003] Acces portes: OK, tous les equipements passent.\n";
-
-            // ELEC-004
-            int count004 = byRule.ContainsKey("ELEC-004") ? byRule["ELEC-004"].Count : 0;
-            if (count004 > 0)
-                summary += $"\n[ELEC-004] Zones humides: {count004} equipement(s)\n" +
-                           $"  {count004} equipement(s) en zone humide a verifier (IP65/inox).\n";
-            else
-                summary += "\n[ELEC-004] Zones humides: OK, aucun equipement en zone humide.\n";
+            // Afficher chaque regle presente dans les resultats
+            foreach (var rule in byRule.Keys.OrderBy(k => k))
+            {
+                int ruleCount = byRule[rule].Count;
+                string ruleName = ruleNames.ContainsKey(rule) ? ruleNames[rule] : rule;
+                if (ruleCount > 0)
+                    summary += $"\n[{rule}] {ruleName}: {ruleCount} violation(s)\n";
+                else
+                    summary += $"\n[{rule}] {ruleName}: OK\n";
+            }
 
             summary += "\n----------------------------------------\n" +
-                $"Total: {total} violation(s) ({critical} critiques, {important} importantes)\n" +
+                $"Total: {total} violation(s) ({critical} critiques, {haute} hautes, {other} autres)\n" +
                 $"Vues \"ZONES RISQUES\" creees: {viewCount}\n" +
                 $"Elements colores: {coloredCount}\n" +
                 $"Symboles places: {annotationCount}\n\n" +
-                "LEGENDE DES SYMBOLES SUR LE PLAN:\n" +
-                "  O  Cercle bleu   = VENTILATION requise (ELEC-002)\n" +
-                "  /\\  Triangle orange = PORTE trop etroite (ELEC-003)\n" +
-                "  <>  Losange rouge  = ZONE HUMIDE IP65 (ELEC-004)\n\n" +
-                "Les vues originales ne sont PAS modifiees.\n" +
+                "LEGENDE DES SYMBOLES SUR LE PLAN:\n";
+
+            // Legende dynamique selon la zone
+            if (zone == "1" || zone == "all")
+                summary +=
+                    "  O  Cercle bleu    = VENTILATION requise (ELEC-002)\n" +
+                    "  /\\  Triangle orange = PORTE trop etroite (ELEC-003)\n" +
+                    "  <>  Losange rouge  = ZONE HUMIDE IP65 (ELEC-004)\n";
+            if (zone == "2" || zone == "all")
+                summary +=
+                    "  <>  Losange rouge  = CHUTE OBJETS (GAINE-001)\n" +
+                    "  O  Cercle magenta = CROISEMENT CF/CFA (GAINE-002)\n" +
+                    "  /\\  Triangle vert  = TRAPPE ACCES (GAINE-003)\n" +
+                    "  /\\  Triangle marron = SURCHARGE SUPPORT (GAINE-004/005)\n";
+
+            summary += "\nLes vues originales ne sont PAS modifiees.\n" +
                 "Consultez les vues prefixees \"ZONES RISQUES -\" dans le navigateur.\n\n" +
                 $"Rapport: {resultPath}";
 
@@ -709,7 +795,7 @@ namespace CHU_SecurityAnalyzer.Commands
                 string sev = spaceSeverity.ContainsKey(spaceName) ? spaceSeverity[spaceName] : "";
 
                 OverrideGraphicSettings overrideToApply =
-                    (sev == "CRITICAL" || sev == "CRITIQUE") ? overrideCritical : overrideImportant;
+                    (sev == "CRITICAL" || sev == "CRITIQUE" || sev == "HAUTE") ? overrideCritical : overrideImportant;
 
                 foreach (int eqId in kvp.Value)
                 {
@@ -737,12 +823,19 @@ namespace CHU_SecurityAnalyzer.Commands
         {
             var styles = new Dictionary<string, GraphicsStyle>();
 
-            // Couleurs par regle
+            // Couleurs par regle (Zone 1 + Zone 2)
             var ruleColors = new Dictionary<string, Color>
             {
+                // Zone 1 - Locaux Electriques
                 { "ELEC-002", new Color(0, 100, 255) },    // Bleu
                 { "ELEC-003", new Color(255, 140, 0) },    // Orange
-                { "ELEC-004", new Color(255, 0, 0) }       // Rouge
+                { "ELEC-004", new Color(255, 0, 0) },      // Rouge
+                // Zone 2 - Gaines Techniques
+                { "GAINE-001", new Color(200, 0, 0) },     // Rouge fonce (chute objets)
+                { "GAINE-002", new Color(255, 0, 255) },   // Magenta (croisement CF/CFA)
+                { "GAINE-003", new Color(0, 150, 0) },     // Vert (trappes acces)
+                { "GAINE-004", new Color(180, 100, 0) },   // Marron (surcharge supports)
+                { "GAINE-005", new Color(180, 100, 0) }    // Marron (calcul charge)
             };
 
             // Chercher la categorie Lines
@@ -792,7 +885,8 @@ namespace CHU_SecurityAnalyzer.Commands
 
         private int PlaceViolationAnnotations(Document doc, Autodesk.Revit.DB.View view,
             AnalysisResults results, ExtractedData data,
-            Dictionary<string, GraphicsStyle> lineStyles)
+            Dictionary<string, GraphicsStyle> lineStyles,
+            FamilySymbol riskSymbol = null)
         {
             int count = 0;
 
@@ -861,7 +955,8 @@ namespace CHU_SecurityAnalyzer.Commands
 
                         switch (ruleId)
                         {
-                            case "ELEC-002": // Cercle
+                            // === Zone 1 - Locaux Electriques ===
+                            case "ELEC-002": // Cercle 2D sur plan (famille 3D placee separement)
                                 DrawCircleSymbol(doc, view, center, s, gs);
                                 break;
                             case "ELEC-003": // Triangle
@@ -869,6 +964,21 @@ namespace CHU_SecurityAnalyzer.Commands
                                 break;
                             case "ELEC-004": // Losange
                                 DrawDiamondSymbol(doc, view, center, s, gs);
+                                break;
+
+                            // === Zone 2 - Gaines Techniques ===
+                            case "GAINE-001": // Losange rouge (chute objets)
+                                DrawDiamondSymbol(doc, view, center, s, gs);
+                                break;
+                            case "GAINE-002": // Cercle magenta (croisement CF/CFA)
+                                DrawCircleSymbol(doc, view, center, s, gs);
+                                break;
+                            case "GAINE-003": // Triangle vert (trappes acces)
+                                DrawTriangleSymbol(doc, view, center, s, gs);
+                                break;
+                            case "GAINE-004": // Triangle marron (surcharge)
+                            case "GAINE-005":
+                                DrawTriangleSymbol(doc, view, center, s, gs);
                                 break;
                         }
 
@@ -891,6 +1001,72 @@ namespace CHU_SecurityAnalyzer.Commands
             }
 
             return count;
+        }
+
+        // =====================================================================
+        //  CHARGEMENT FAMILLE .RFA SYMBOLE DE RISQUE
+        // =====================================================================
+
+        /// <summary>
+        /// Charge la famille .rfa du symbole de risque dans le document Revit.
+        /// Retourne le FamilySymbol pret a etre instancie, ou null si echec.
+        /// </summary>
+        private FamilySymbol LoadOrGetRiskFamily(Document doc)
+        {
+            // 1. Verifier si Famille_TEST est deja chargee
+            FamilySymbol existingSymbol = new FilteredElementCollector(doc)
+                .OfClass(typeof(FamilySymbol))
+                .Cast<FamilySymbol>()
+                .FirstOrDefault(fs => fs.FamilyName == RISK_FAMILY_NAME);
+
+            if (existingSymbol != null)
+            {
+                if (!existingSymbol.IsActive) existingSymbol.Activate();
+                return existingSymbol;
+            }
+
+            // 2. Trouver le fichier .rfa
+            string dllDir = Path.GetDirectoryName(
+                System.Reflection.Assembly.GetExecutingAssembly().Location);
+            string rfaPath = Path.Combine(dllDir, RISK_FAMILY_RFA);
+
+            if (!File.Exists(rfaPath))
+            {
+                string familiesDir = Path.Combine(PROJECT_DIR, "RevitPlugin", "Families");
+                rfaPath = Path.Combine(familiesDir, RISK_FAMILY_RFA);
+            }
+
+            if (!File.Exists(rfaPath)) return null;
+
+            // 3. Charger la famille
+            Family family = null;
+            bool loaded = doc.LoadFamily(rfaPath, out family);
+
+            if (!loaded || family == null)
+            {
+                // Si LoadFamily retourne false, la famille est peut-etre deja chargee
+                // sous le meme nom - re-essayer la recherche par nom exact uniquement
+                existingSymbol = new FilteredElementCollector(doc)
+                    .OfClass(typeof(FamilySymbol))
+                    .Cast<FamilySymbol>()
+                    .FirstOrDefault(fs => fs.FamilyName == RISK_FAMILY_NAME
+                                       || fs.FamilyName.Contains("Famille_TEST"));
+
+                if (existingSymbol != null)
+                {
+                    if (!existingSymbol.IsActive) existingSymbol.Activate();
+                    return existingSymbol;
+                }
+                return null;
+            }
+
+            // 4. Recuperer le premier FamilySymbol (type) de la famille
+            ISet<ElementId> typeIds = family.GetFamilySymbolIds();
+            if (typeIds.Count == 0) return null;
+
+            FamilySymbol symbol = doc.GetElement(typeIds.First()) as FamilySymbol;
+            if (symbol != null && !symbol.IsActive) symbol.Activate();
+            return symbol;
         }
 
         // =====================================================================
@@ -977,14 +1153,26 @@ namespace CHU_SecurityAnalyzer.Commands
         {
             switch (ruleId)
             {
+                // Zone 1
                 case "ELEC-002":
                     return "VENTILATION";
                 case "ELEC-003":
                     return "PORTE (" + count + ")";
                 case "ELEC-004":
                     return "IP65 (" + count + ")";
+                // Zone 2
+                case "GAINE-001":
+                    return "CHUTE (" + count + ")";
+                case "GAINE-002":
+                    return "CF/CFA (" + count + ")";
+                case "GAINE-003":
+                    return "TRAPPE (" + count + ")";
+                case "GAINE-004":
+                    return "SURCHARGE (" + count + ")";
+                case "GAINE-005":
+                    return "CHARGE (" + count + ")";
                 default:
-                    return ruleId;
+                    return ruleId + " (" + count + ")";
             }
         }
 

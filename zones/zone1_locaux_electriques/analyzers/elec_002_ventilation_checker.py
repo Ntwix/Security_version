@@ -16,6 +16,7 @@ from shared.logger import logger
 from shared.geometry_utils import GeometryUtils
 
 
+
 class ELEC002VentilationChecker:
     """Analyseur règle ELEC-002 - Ventilation"""
 

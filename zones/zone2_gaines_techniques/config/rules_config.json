@@ -20,8 +20,8 @@
     "severity": "CRITIQUE",
     "parameters": {
       "min_distance_m": 0.30,
-      "courant_fort_keywords": ["cf", "courant fort", "power", "puissance", "force", "ht", "bt", "tgbt"],
-      "courant_faible_keywords": ["cfa", "courant faible", "data", "vdi", "rj45", "fibre", "tel", "video", "alarme"],
+      "courant_fort_keywords": ["cfo", "cdc cfo", "courant fort", "power", "puissance", "force", "ht", "bt", "tgbt"],
+      "courant_faible_keywords": ["cfa", "cdc cfa", "cdc incendie", "courant faible", "data", "vdi", "rj45", "fibre", "tel", "video", "alarme"],
       "description": "Distance minimale 30 cm entre supports courant fort et courant faible"
     }
   },

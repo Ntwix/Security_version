@@ -93,17 +93,19 @@ class GAINE004SurchargeSupportsChecker:
             eq_name = eq.get('name', '').lower()
             ifc_type = eq.get('ifc_type', '')
 
-            # Identifier supports
-            support_keywords = ['chemin de câbles', 'support', 'échelle', 'goulotte',
-                               'tablette', 'rail', 'cable tray', 'ladder']
+            # Identifier supports (chemins de câbles)
+            # PFU = préfixe des chemins de câbles dans la maquette CHU
+            support_keywords = ['chemin de câbles', 'chemin de cables', 'support', 'échelle',
+                               'goulotte', 'tablette', 'rail', 'cable tray', 'ladder', 'pfu']
             support_ifc = ['IfcCableCarrierSegment', 'IfcCableCarrierFitting', 'IfcDiscreteAccessory']
 
             if any(kw in eq_name for kw in support_keywords) or any(t in ifc_type for t in support_ifc):
                 supports.append(eq)
                 continue
 
-            # Identifier câbles
-            cable_keywords = ['câble', 'cable', 'fil', 'conducteur', 'wire']
+            # Identifier câbles et coffrets de distribution
+            # CDC CFO/CFA/Incendie = Coffrets Distribution dans la maquette CHU
+            cable_keywords = ['câble', 'cable', 'fil', 'conducteur', 'wire', 'cdc']
             cable_ifc = ['IfcCableSegment', 'IfcCableFitting']
 
             if any(kw in eq_name for kw in cable_keywords) or any(t in ifc_type for t in cable_ifc):
@@ -165,15 +167,29 @@ class GAINE004SurchargeSupportsChecker:
         else:
             logger.rule_passed(self.RULE_ID, support_name)
 
-    def _extract_capacity(self, properties: Dict) -> float:
+    @staticmethod
+    def _props_to_dict(props) -> Dict:
+        """Convertit les propriétés en dict (gère le format list de DataContractJsonSerializer)."""
+        if isinstance(props, dict):
+            return props
+        if isinstance(props, list):
+            result = {}
+            for item in props:
+                if isinstance(item, dict) and 'Key' in item:
+                    result[item['Key']] = item.get('Value', '')
+            return result
+        return {}
+
+    def _extract_capacity(self, properties) -> float:
         """Extrait la capacité portante depuis les propriétés"""
+        props = self._props_to_dict(properties)
         capacity_keys = ['LoadCapacity', 'ChargeAdmissible', 'MaxLoad',
                         'Capacite', 'Capacity', 'ChargeMax']
 
         for key in capacity_keys:
-            if key in properties:
+            if key in props:
                 try:
-                    return float(properties[key])
+                    return float(props[key])
                 except:
                     pass
         return None
