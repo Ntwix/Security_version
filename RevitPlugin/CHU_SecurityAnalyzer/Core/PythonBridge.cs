@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.Serialization.Json;
 using System.Text;
+using System.Threading;
 
 namespace CHU_SecurityAnalyzer.Core
 {
@@ -36,7 +37,7 @@ namespace CHU_SecurityAnalyzer.Core
         public string ExportDataToJson(ExtractedData data, string outputPath = null)
         {
             if (outputPath == null)
-                outputPath = Path.Combine(_workingDir, "extracted_data.json");
+                outputPath = Path.Combine(Path.GetTempPath(), "chu_extracted_data_" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".json");
 
             var serializer = new DataContractJsonSerializer(typeof(ExtractedData));
             using (var stream = new FileStream(outputPath, FileMode.Create))
@@ -74,34 +75,36 @@ namespace CHU_SecurityAnalyzer.Core
             };
 
             var process = new Process { StartInfo = processInfo };
-            var output = new StringBuilder();
-            var errors = new StringBuilder();
 
-            process.OutputDataReceived += (sender, e) =>
-            {
-                if (e.Data != null) output.AppendLine(e.Data);
-            };
-            process.ErrorDataReceived += (sender, e) =>
-            {
-                if (e.Data != null) errors.AppendLine(e.Data);
-            };
+            // Lire stdout et stderr dans des threads separes pour eviter le deadlock
+            string output = "";
+            string errors = "";
+            var sbOut = new StringBuilder();
+            var sbErr = new StringBuilder();
 
             process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
 
-            // Timeout 5 minutes
-            bool finished = process.WaitForExit(300000);
+            var tOut = new Thread(() => { sbOut.Append(process.StandardOutput.ReadToEnd()); });
+            var tErr = new Thread(() => { sbErr.Append(process.StandardError.ReadToEnd()); });
+            tOut.Start();
+            tErr.Start();
+
+            bool finished = process.WaitForExit(120000); // 120s timeout
+            tOut.Join(5000);
+            tErr.Join(5000);
+
+            output = sbOut.ToString();
+            errors = sbErr.ToString();
 
             if (!finished)
             {
-                process.Kill();
-                throw new TimeoutException("L'analyse Python a dépassé le timeout de 5 minutes");
+                try { process.Kill(); } catch { }
+                throw new TimeoutException("L'analyse Python a depasse 120 secondes.\nOutput: " + output + "\nErrors: " + errors);
             }
 
             if (process.ExitCode != 0)
             {
-                throw new Exception($"Erreur Python (code {process.ExitCode}):\n{errors}");
+                throw new Exception("Erreur Python (code " + process.ExitCode + "):\n" + errors + "\nOutput: " + output);
             }
 
             string resultPath = Path.Combine(outputDir, "analysis_results.json");

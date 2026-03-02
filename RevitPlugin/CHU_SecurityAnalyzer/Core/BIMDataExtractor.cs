@@ -136,18 +136,14 @@ namespace CHU_SecurityAnalyzer.Core
             Document sourceDoc = _docElec ?? _docArchi;
 
             // Catégories d'équipements électriques
+            // NOTE: OST_CableTray et OST_Conduit exclus volontairement —
+            // ils contiennent des milliers de segments et ralentissent Revit.
+            // Les règles Zone 1 (ELEC-001 à 004) ne les utilisent pas.
             var categories = new[]
             {
                 BuiltInCategory.OST_ElectricalEquipment,
                 BuiltInCategory.OST_ElectricalFixtures,
-                BuiltInCategory.OST_LightingFixtures,
-                BuiltInCategory.OST_LightingDevices,
-                BuiltInCategory.OST_CableTray,
-                BuiltInCategory.OST_Conduit,
-                BuiltInCategory.OST_CommunicationDevices,
-                BuiltInCategory.OST_DataDevices,
-                BuiltInCategory.OST_FireAlarmDevices,
-                BuiltInCategory.OST_SecurityDevices
+                BuiltInCategory.OST_MechanicalEquipment,
             };
 
             foreach (var cat in categories)
@@ -173,7 +169,8 @@ namespace CHU_SecurityAnalyzer.Core
             }
 
             // Si ELEC est un lien, chercher aussi dans les RevitLinkInstances
-            if (_docElec == null)
+            // Seulement si on n'a rien trouvé dans le doc hôte (évite double extraction)
+            if (_docElec == null && equipment.Count == 0)
             {
                 equipment.AddRange(ExtractEquipmentFromLinks(categories));
             }
@@ -366,7 +363,7 @@ namespace CHU_SecurityAnalyzer.Core
                 BboxMin = bboxMin,
                 BboxMax = bboxMax,
                 Centroid = centroid,
-                Properties = GetElementProperties(door),
+                Properties = new Dictionary<string, string>(),
                 RevitElementId = door.Id.IntegerValue
             };
         }
@@ -456,8 +453,17 @@ namespace CHU_SecurityAnalyzer.Core
             double[] bboxMax = FeetToMeters(bbox.Max);
             double[] centroid = GetCentroid(bboxMin, bboxMax);
 
-            var properties = GetElementProperties(slab);
-            double? loadCapacity = ExtractLoadCapacity(properties);
+            // Chercher LoadCapacity directement sans scanner tous les paramètres
+            double? loadCapacity = null;
+            foreach (string key in new[] { "LoadCapacity", "ChargeAdmissible", "MaxLoad", "Charge" })
+            {
+                Parameter p = slab.LookupParameter(key);
+                if (p != null && p.HasValue && p.StorageType == StorageType.Double)
+                {
+                    double v = p.AsDouble();
+                    if (v > 0) { loadCapacity = v; break; }
+                }
+            }
 
             return new SlabData
             {
@@ -468,7 +474,7 @@ namespace CHU_SecurityAnalyzer.Core
                 BboxMax = bboxMax,
                 Centroid = centroid,
                 LoadCapacityKg = loadCapacity,
-                Properties = properties,
+                Properties = new Dictionary<string, string>(),
                 RevitElementId = slab.Id.IntegerValue
             };
         }
@@ -513,6 +519,29 @@ namespace CHU_SecurityAnalyzer.Core
             return Math.Sqrt(dx * dx + dy * dy + dz * dz);
         }
 
+        // Noms de parametres utiles pour les analyseurs Python
+        private static readonly HashSet<string> USEFUL_PARAMS = new HashSet<string>(
+            System.StringComparer.OrdinalIgnoreCase)
+        {
+            // Poids / charge
+            "Poids", "Weight", "Mass", "Masse",
+            "LoadCapacity", "ChargeAdmissible", "MaxLoad", "Charge",
+            // Ventilation
+            "Ventilation", "Debit", "Flow", "AirFlow",
+            // IP / protection
+            "IP", "IndiceProtection", "ProtectionIndex",
+            // Humidite / zone
+            "Zone", "ZoneType", "Humidity", "Humidite", "WetZone",
+            // Accessibilite
+            "Access", "Acces", "Accessible",
+            // Gaine / support
+            "Height", "Hauteur", "Length", "Longueur",
+            "CableType", "TypeCable", "CF", "CFA",
+            // Identification
+            "Description", "Comments", "Mark", "Repere",
+            "System Classification", "Classification systeme"
+        };
+
         private Dictionary<string, string> GetElementProperties(Element elem)
         {
             var props = new Dictionary<string, string>();
@@ -521,8 +550,9 @@ namespace CHU_SecurityAnalyzer.Core
             {
                 if (!param.HasValue) continue;
                 string name = param.Definition.Name;
-                string value = null;
+                if (!USEFUL_PARAMS.Contains(name)) continue;
 
+                string value = null;
                 switch (param.StorageType)
                 {
                     case StorageType.String:
@@ -533,9 +563,6 @@ namespace CHU_SecurityAnalyzer.Core
                         break;
                     case StorageType.Integer:
                         value = param.AsInteger().ToString();
-                        break;
-                    case StorageType.ElementId:
-                        value = param.AsElementId().IntegerValue.ToString();
                         break;
                 }
 

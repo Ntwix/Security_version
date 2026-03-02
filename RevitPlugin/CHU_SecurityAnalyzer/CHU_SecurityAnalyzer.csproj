@@ -60,6 +60,8 @@
     <Compile Include="Core\PythonBridge.cs" />
     <Compile Include="Core\RevitDataModels.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="UI\RiskDockablePane.cs" />
+    <Compile Include="UI\RiskPanelPage.xaml.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="CHU_SecurityAnalyzer.addin">

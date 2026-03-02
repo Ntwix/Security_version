@@ -3,12 +3,13 @@ using System.IO;
 using System.Reflection;
 using System.Windows.Media.Imaging;
 using Autodesk.Revit.UI;
+using CHU_SecurityAnalyzer.UI;
 
 namespace CHU_SecurityAnalyzer
 {
     /// <summary>
     /// Application principale du plugin Revit.
-    /// Crée l'onglet "CHU Sécurité" dans le ruban avec les boutons d'analyse.
+    /// Cree l'onglet "CHU Securite" dans le ruban avec les boutons d'analyse.
     /// </summary>
     public class App : IExternalApplication
     {
@@ -16,12 +17,18 @@ namespace CHU_SecurityAnalyzer
         {
             try
             {
-                // Créer onglet dans le ruban
-                string tabName = "CHU Sécurité";
-                application.CreateRibbonTab(tabName);
+                // Enregistrer le panneau dockable avant tout
+                application.RegisterDockablePane(
+                    RiskDockablePane.PaneId,
+                    "CHU - Zones a Risque",
+                    new RiskDockablePane());
+
+                // Creer onglet dans le ruban
+                string tabName = "CHU Securite";
+                try { application.CreateRibbonTab(tabName); } catch { }
 
                 // Panneau principal
-                RibbonPanel panel = application.CreateRibbonPanel(tabName, "Analyse Conformité");
+                RibbonPanel panel = application.CreateRibbonPanel(tabName, "Analyse Conformite");
 
                 // Chemin de l'assembly
                 string assemblyPath = Assembly.GetExecutingAssembly().Location;
@@ -34,10 +41,10 @@ namespace CHU_SecurityAnalyzer
                     "CHU_SecurityAnalyzer.Commands.ExtractAndAnalyzeCommand"
                 )
                 {
-                    ToolTip = "Extraire les données BIM et lancer l'analyse de conformité sécurité",
-                    LongDescription = "Extrait les données des maquettes ARCHI et ELEC,\n" +
-                                     "lance l'analyse Python pour la zone sélectionnée,\n" +
-                                     "puis colorie les éléments en violation dans la vue.",
+                    ToolTip = "Extraire les donnees BIM et lancer l'analyse de conformite securite",
+                    LongDescription = "Extrait les donnees des maquettes ARCHI et ELEC,\n" +
+                                     "lance l'analyse Python pour la zone selectionnee,\n" +
+                                     "puis colorie les elements en violation dans la vue.",
                 };
 
                 panel.AddItem(btnAnalyze);
@@ -47,7 +54,7 @@ namespace CHU_SecurityAnalyzer
             catch (Exception ex)
             {
                 TaskDialog.Show("Erreur Plugin CHU",
-                    $"Erreur initialisation plugin:\n{ex.Message}");
+                    "Erreur initialisation plugin:\n" + ex.Message);
                 return Result.Failed;
             }
         }

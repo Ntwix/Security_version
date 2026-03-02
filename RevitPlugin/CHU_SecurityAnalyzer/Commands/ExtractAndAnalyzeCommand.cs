@@ -8,6 +8,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Structure;
 using Autodesk.Revit.UI;
 using CHU_SecurityAnalyzer.Core;
+using CHU_SecurityAnalyzer.UI;
 using Color = Autodesk.Revit.DB.Color;
 
 namespace CHU_SecurityAnalyzer.Commands
@@ -21,8 +22,9 @@ namespace CHU_SecurityAnalyzer.Commands
         );
 
         private const string VIEW_PREFIX = "ZONES RISQUES - ";
-        private const string RISK_FAMILY_RFA = "Famille_TEST.rfa";
-        private const string RISK_FAMILY_NAME = "Famille_TEST";
+        private const string RISK_FAMILY_RFA = "ELEC-002.rfa";
+        private const string RISK_FAMILY_NAME = "ELEC-002";
+        private const string FAMILIES_ELEC_DIR = "ELEC";
 
         private class VisualizationResult
         {
@@ -52,9 +54,6 @@ namespace CHU_SecurityAnalyzer.Commands
                 DetectArchiAndElec(doc, out docArchi, out docElec, out statusMsg);
 
                 // === Etape 3 : Extraction BIM ===
-                TaskDialog.Show("Extraction en cours",
-                    $"{statusMsg}\n\nExtraction des donnees BIM en cours...\nZone selectionnee: {zone}");
-
                 var extractor = new BIMDataExtractor(docArchi, docElec);
                 ExtractedData data = extractor.ExtractAll();
 
@@ -80,7 +79,11 @@ namespace CHU_SecurityAnalyzer.Commands
                 // === Etape 7 : Dupliquer vues + appliquer coloration et symboles ===
                 var vizResult = ApplyVisualizationsToAllViews(doc, uiDoc, results, data);
 
-                // === Etape 8 : Naviguer vers la vue risques + afficher resume ===
+                // === Etape 8 : Mettre a jour le panneau dockable ===
+                try { RiskDockablePane.UpdateResults(uiApp, results, zone); }
+                catch { }
+
+                // === Etape 9 : Naviguer vers la vue risques + afficher resume ===
                 if (vizResult.FirstView != null)
                 {
                     try { uiDoc.ActiveView = vizResult.FirstView; }
@@ -131,79 +134,197 @@ namespace CHU_SecurityAnalyzer.Commands
             {
                 txGroup.Start();
 
-                // Sous-transaction : creer les styles de ligne + charger famille (une seule fois)
-                // + nettoyer TOUTES les anciennes instances de famille risque dans le projet
                 Dictionary<string, GraphicsStyle> lineStyles;
-                FamilySymbol riskSymbol = null;
-                using (Transaction txStyles = new Transaction(doc, "CHU Security - Styles et famille"))
+                var ruleSymbols = new Dictionary<string, FamilySymbol>();
+
+                // === Transaction 1 : styles de ligne ===
+                using (Transaction txStyles = new Transaction(doc, "CHU Security - Styles"))
                 {
                     txStyles.Start();
                     lineStyles = GetOrCreateLineStyles(doc);
-                    riskSymbol = LoadOrGetRiskFamily(doc);
+                    txStyles.Commit();
+                }
 
-                    // Supprimer toutes les anciennes instances de famille risque (elements de modele)
-                    var oldRiskInstances = new FilteredElementCollector(doc)
-                        .OfClass(typeof(FamilyInstance))
-                        .Cast<FamilyInstance>()
-                        .Where(fi => fi.Symbol.FamilyName == RISK_FAMILY_NAME
-                                  || fi.Symbol.FamilyName.Contains("Famille_TEST")
-                                  || fi.Symbol.FamilyName.Contains("renamed"))
-                        .Select(fi => fi.Id)
-                        .ToList();
-                    if (oldRiskInstances.Count > 0)
-                        doc.Delete(oldRiskInstances);
+                // === Transaction 2a : charger familles manquantes seulement ===
+                string elecDir = Path.Combine(PROJECT_DIR, "RevitPlugin", "Families", FAMILIES_ELEC_DIR);
+                var elecRuleIds = new[] { "ELEC-001", "ELEC-002", "ELEC-003", "ELEC-004" };
 
-                    // Placer les familles 3D ELEC-002 une seule fois par espace
-                    if (riskSymbol != null)
+                // D'abord recuperer celles deja chargees (sans transaction)
+                foreach (string ruleId in elecRuleIds)
+                {
+                    FamilySymbol existing = new FilteredElementCollector(doc)
+                        .OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>()
+                        .FirstOrDefault(fs => fs.FamilyName == ruleId);
+                    if (existing != null)
                     {
-                        var levels = new FilteredElementCollector(doc)
-                            .OfClass(typeof(Level))
-                            .Cast<Level>()
-                            .OrderBy(l => l.Elevation)
-                            .ToList();
-
-                        var placedSpaces = new HashSet<string>();
-                        foreach (var v in results.Violations)
+                        if (!existing.IsActive)
                         {
-                            if (v.RuleId != "ELEC-002") continue;
-                            // Cle unique par global_id pour eviter les doublons
-                            string spaceKey = v.SpaceGlobalId ?? v.SpaceName ?? "";
-                            if (string.IsNullOrEmpty(spaceKey) || placedSpaces.Contains(spaceKey)) continue;
-                            placedSpaces.Add(spaceKey);
+                            using (Transaction txAct = new Transaction(doc, "Activate " + ruleId))
+                            {
+                                txAct.Start();
+                                existing.Activate();
+                                txAct.Commit();
+                            }
+                        }
+                        ruleSymbols[ruleId] = existing;
+                    }
+                }
 
-                            double[] loc = FindSpaceLocation(data, v.SpaceName ?? "");
-                            if (loc == null || loc.Length < 3) continue;
+                // Charger seulement les familles manquantes (une transaction par famille)
+                foreach (string ruleId in elecRuleIds)
+                {
+                    if (ruleSymbols.ContainsKey(ruleId)) continue; // deja chargee
+                    string rfaPath = Path.Combine(elecDir, ruleId + ".rfa");
+                    if (!File.Exists(rfaPath)) continue;
 
-                            double xFt = loc[0] / 0.3048;
-                            double yFt = loc[1] / 0.3048;
-                            double zFt = loc[2] / 0.3048;
+                    using (Transaction txLoad = new Transaction(doc, "Charger " + ruleId))
+                    {
+                        txLoad.Start();
+                        Family family = null;
+                        doc.LoadFamily(rfaPath, new SilentFamilyLoadOptions(), out family);
+                        if (family != null)
+                        {
+                            var typeIds = family.GetFamilySymbolIds();
+                            if (typeIds.Count > 0)
+                            {
+                                FamilySymbol sym = doc.GetElement(typeIds.First()) as FamilySymbol;
+                                if (sym != null) { sym.Activate(); ruleSymbols[ruleId] = sym; }
+                            }
+                        }
+                        txLoad.Commit();
+                    }
+                }
 
-                            // Trouver le niveau le plus proche
-                            Level bestLevel = null;
+                // === Transaction 2b : supprimer anciennes instances ===
+                using (Transaction txClean = new Transaction(doc, "CHU Security - Nettoyage"))
+                {
+                    txClean.Start();
+
+                    var elecSymIds = new FilteredElementCollector(doc)
+                        .OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>()
+                        .Where(fs => fs.FamilyName.StartsWith("ELEC-")
+                                  || fs.FamilyName.Contains("Famille_TEST")
+                                  || fs.FamilyName.Contains("renamed"))
+                        .Select(fs => fs.Id).ToHashSet();
+
+                    if (elecSymIds.Count > 0)
+                    {
+                        var oldInstances = new FilteredElementCollector(doc)
+                            .OfClass(typeof(FamilyInstance)).Cast<FamilyInstance>()
+                            .Where(fi => elecSymIds.Contains(fi.Symbol.Id))
+                            .Select(fi => fi.Id).ToList();
+                        if (oldInstances.Count > 0)
+                            doc.Delete(oldInstances);
+                    }
+
+                    txClean.Commit();
+                }
+
+                // === Transaction 3 : placer les familles par espace selon la regle ===
+                using (Transaction txPlace = new Transaction(doc, "CHU Security - Placement"))
+                {
+                    txPlace.Start();
+
+                    var levels = new FilteredElementCollector(doc)
+                        .OfClass(typeof(Level)).Cast<Level>()
+                        .OrderBy(l => l.Elevation).ToList();
+
+                    // Construire index revit_element_id -> SpaceData pour acces rapide
+                    var spaceById = new Dictionary<int, SpaceData>();
+                    foreach (var sp in data.Spaces)
+                        if (sp.RevitElementId > 0) spaceById[sp.RevitElementId] = sp;
+
+                    // Construire index name -> SpaceData
+                    var spaceByName = new Dictionary<string, SpaceData>();
+                    foreach (var sp in data.Spaces)
+                        if (sp.Name != null && !spaceByName.ContainsKey(sp.Name)) spaceByName[sp.Name] = sp;
+
+                    // Detecter le document ARCHI (contient les espaces/rooms)
+                    Document docArchiLocal = null;
+                    foreach (RevitLinkInstance li in new FilteredElementCollector(doc).OfClass(typeof(RevitLinkInstance)))
+                    {
+                        Document ld = li.GetLinkDocument();
+                        if (ld == null) continue;
+                        string lt = ld.Title.ToLower();
+                        if (lt.Contains("arc") || lt.Contains("archi")) { docArchiLocal = ld; break; }
+                    }
+
+                    var placedKeys = new HashSet<string>();
+                    foreach (var v in results.Violations)
+                    {
+                        if (!ruleSymbols.ContainsKey(v.RuleId)) continue;
+
+                        string spaceKey = v.RuleId + "_" + (v.SpaceGlobalId ?? v.SpaceName ?? "");
+                        if (placedKeys.Contains(spaceKey)) continue;
+                        placedKeys.Add(spaceKey);
+
+                        // Trouver la position depuis Revit via revit_element_id
+                        XYZ pt = null;
+                        Level bestLevel = null;
+
+                        SpaceData spaceData = null;
+                        if (v.SpaceName != null && spaceByName.ContainsKey(v.SpaceName))
+                            spaceData = spaceByName[v.SpaceName];
+
+                        // Essayer de recuperer la localisation depuis l'element Revit (ARCHI ou hote)
+                        if (spaceData != null && spaceData.RevitElementId > 0)
+                        {
+                            ElementId eid = new ElementId(spaceData.RevitElementId);
+                            Element elem = null;
+                            if (docArchiLocal != null) elem = docArchiLocal.GetElement(eid);
+                            if (elem == null) elem = doc.GetElement(eid);
+
+                            if (elem != null)
+                            {
+                                LocationPoint lp = elem.Location as LocationPoint;
+                                if (lp != null) pt = lp.Point;
+                                else
+                                {
+                                    BoundingBoxXYZ bb = elem.get_BoundingBox(null);
+                                    if (bb != null) pt = (bb.Min + bb.Max) / 2;
+                                }
+                                // Trouver le niveau de l'element
+                                Parameter lvlParam = elem.get_Parameter(BuiltInParameter.ROOM_LEVEL_ID);
+                                if (lvlParam != null)
+                                    bestLevel = doc.GetElement(lvlParam.AsElementId()) as Level;
+                            }
+                        }
+
+                        // Fallback : utiliser les coordonnees de la violation (location en metres IFC)
+                        // et chercher le niveau par nom
+                        if (pt == null && v.Location != null && v.Location.Length >= 3)
+                        {
+                            // Les coordonnees IFC sont en metres mais avec une origine differente
+                            // On utilise uniquement Z pour trouver le niveau, X/Y depuis l'element Revit
+                            // Si pas d'element Revit disponible, skip
+                            continue;
+                        }
+
+                        if (pt == null) continue;
+
+                        // Trouver le niveau si pas encore trouve
+                        if (bestLevel == null && levels.Count > 0)
+                        {
                             double bestDist = double.MaxValue;
                             foreach (var lvl in levels)
                             {
-                                double dist = Math.Abs(lvl.Elevation - zFt);
-                                if (dist < bestDist)
-                                {
-                                    bestDist = dist;
-                                    bestLevel = lvl;
-                                }
+                                double dist = Math.Abs(lvl.Elevation - pt.Z);
+                                if (dist < bestDist) { bestDist = dist; bestLevel = lvl; }
                             }
+                        }
 
-                            if (bestLevel != null)
-                            {
-                                // Z = 0 car NewFamilyInstance avec Level place au niveau automatiquement
-                                XYZ pt = new XYZ(xFt, yFt, 0);
-                                doc.Create.NewFamilyInstance(
-                                    pt, riskSymbol, bestLevel,
-                                    StructuralType.NonStructural);
-                            }
+                        if (bestLevel != null)
+                        {
+                            XYZ placePt = new XYZ(pt.X, pt.Y, 0);
+                            doc.Create.NewFamilyInstance(placePt, ruleSymbols[v.RuleId], bestLevel,
+                                StructuralType.NonStructural);
                         }
                     }
 
-                    txStyles.Commit();
+                    txPlace.Commit();
                 }
+
+                FamilySymbol riskSymbol = ruleSymbols.ContainsKey("ELEC-002") ? ruleSymbols["ELEC-002"] : null;
 
                 // Pour chaque vue eligible dont le niveau a des violations
                 foreach (ViewPlan originalView in eligibleViews)
@@ -315,27 +436,48 @@ namespace CHU_SecurityAnalyzer.Commands
         {
             var levelElevations = new HashSet<double>();
 
-            // Collecter tous les niveaux du document
+            // Plages Z en metres par mot-cle de niveau (meme logique que PlaceViolationAnnotations)
             var levels = new FilteredElementCollector(doc)
-                .OfClass(typeof(Level))
-                .Cast<Level>()
-                .OrderBy(l => l.Elevation)
-                .ToList();
+                .OfClass(typeof(Level)).Cast<Level>()
+                .OrderBy(l => l.Elevation).ToList();
 
+            // Pour chaque violation, trouver sa plage Z et quels niveaux y correspondent
+            var spaceZCache = new Dictionary<string, double>();
             foreach (var v in results.Violations)
             {
-                double[] location = FindSpaceLocation(data, v.SpaceName ?? "");
-                if (location == null || location.Length < 3) continue;
+                string sName = v.SpaceName ?? "";
+                if (!spaceZCache.ContainsKey(sName))
+                {
+                    double[] loc = FindSpaceLocation(data, sName);
+                    spaceZCache[sName] = (loc != null && loc.Length >= 3) ? loc[2] : double.NaN;
+                }
+                double zM = spaceZCache[sName];
+                if (double.IsNaN(zM)) continue;
 
-                double zFeet = location[2] / 0.3048;
-
-                // Trouver le niveau correspondant (meme plage que PlaceViolationAnnotations)
+                // Associer chaque niveau dont la plage Z contient cet espace
                 foreach (var level in levels)
                 {
-                    double levelZ = level.Elevation;
-                    double zMin = levelZ - 1.0;
-                    double zMax = levelZ + 16.4;
-                    if (zFeet >= zMin && zFeet <= zMax)
+                    string lvlName = level.Name.ToUpper();
+                    double zMinM, zMaxM;
+                    if (lvlName.Contains("SS") || lvlName.Contains("SOUS"))
+                        { zMinM = -6.0; zMaxM = -0.5; }
+                    else if (lvlName.Contains("RDC") || lvlName.Contains("REZ"))
+                        { zMinM = -0.5; zMaxM = 3.5; }
+                    else if (lvlName.Contains("N1") || (lvlName.Contains("1") && !lvlName.Contains("N2") && !lvlName.Contains("N3") && !lvlName.Contains("N4")))
+                        { zMinM = 3.5; zMaxM = 7.0; }
+                    else if (lvlName.Contains("N2") || (lvlName.Contains("2") && !lvlName.Contains("N3") && !lvlName.Contains("N4")))
+                        { zMinM = 7.0; zMaxM = 10.5; }
+                    else if (lvlName.Contains("N3") || lvlName.Contains("3"))
+                        { zMinM = 10.5; zMaxM = 14.0; }
+                    else if (lvlName.Contains("N4") || lvlName.Contains("4") || lvlName.Contains("TT") || lvlName.Contains("TOIT") || lvlName.Contains("TERR"))
+                        { zMinM = 14.0; zMaxM = 25.0; }
+                    else
+                    {
+                        double elev = level.Elevation * 0.3048;
+                        zMinM = elev - 1.5; zMaxM = elev + 4.5;
+                    }
+
+                    if (zM >= zMinM && zM <= zMaxM)
                     {
                         levelElevations.Add(level.Elevation);
                         break;
@@ -478,31 +620,8 @@ namespace CHU_SecurityAnalyzer.Commands
             if (textNotes.Count > 0)
                 doc.Delete(textNotes);
 
-            // Supprimer les instances de la famille de risque (dans tout le document,
-            // car ce sont des elements de modele, pas des elements de vue)
-            var riskInstances = new FilteredElementCollector(doc)
-                .OfClass(typeof(FamilyInstance))
-                .Cast<FamilyInstance>()
-                .Where(fi => fi.Symbol.FamilyName == RISK_FAMILY_NAME
-                          || fi.Symbol.FamilyName.Contains("Famille_TEST")
-                          || fi.Symbol.FamilyName.Contains("renamed"))
-                .Select(fi => fi.Id)
-                .ToList();
-
-            if (riskInstances.Count > 0)
-                doc.Delete(riskInstances);
-
-            // Reset les overrides graphiques
-            var allElements = new FilteredElementCollector(doc, view.Id)
-                .WhereElementIsNotElementType()
-                .ToElementIds();
-
-            var defaultOverride = new OverrideGraphicSettings();
-            foreach (ElementId elemId in allElements)
-            {
-                try { view.SetElementOverrides(elemId, defaultOverride); }
-                catch { }
-            }
+            // Les instances ELEC sont des elements de modele (pas de vue) :
+            // elles sont supprimees dans txClean avant chaque analyse, pas ici.
         }
 
         // =====================================================================
@@ -890,20 +1009,54 @@ namespace CHU_SecurityAnalyzer.Commands
         {
             int count = 0;
 
-            // Determiner la plage Z de la vue active (en pieds)
-            double viewZMin = double.MinValue;
-            double viewZMax = double.MaxValue;
+            // Determiner la plage Z (en metres) des espaces a afficher dans cette vue
+            // selon le nom du niveau associe a la vue
+            double zMinM = double.MinValue;
+            double zMaxM = double.MaxValue;
 
-            ViewPlan viewPlan = view as ViewPlan;
-            if (viewPlan != null && viewPlan.GenLevel != null)
+            ViewPlan vp2 = view as ViewPlan;
+            if (vp2 != null && vp2.GenLevel != null)
             {
-                double levelZ = viewPlan.GenLevel.Elevation;
-                viewZMin = levelZ - 1.0;
-                viewZMax = levelZ + 16.4;
+                string lvlName = vp2.GenLevel.Name.ToUpper();
+                if (lvlName.Contains("SS") || lvlName.Contains("SOUS"))
+                    { zMinM = -6.0; zMaxM = -0.5; }
+                else if (lvlName.Contains("RDC") || lvlName.Contains("REZ"))
+                    { zMinM = -0.5; zMaxM = 3.5; }
+                else if (lvlName.Contains("N1") || (lvlName.Contains("1") && !lvlName.Contains("N2") && !lvlName.Contains("N3") && !lvlName.Contains("N4")))
+                    { zMinM = 3.5; zMaxM = 7.0; }
+                else if (lvlName.Contains("N2") || (lvlName.Contains("2") && !lvlName.Contains("N3") && !lvlName.Contains("N4")))
+                    { zMinM = 7.0; zMaxM = 10.5; }
+                else if (lvlName.Contains("N3") || lvlName.Contains("3"))
+                    { zMinM = 10.5; zMaxM = 14.0; }
+                else if (lvlName.Contains("N4") || lvlName.Contains("4") || lvlName.Contains("TT") || lvlName.Contains("TOIT") || lvlName.Contains("TERR"))
+                    { zMinM = 14.0; zMaxM = 25.0; }
+                else
+                {
+                    // Fallback : utiliser l'elevation du niveau pour estimer la plage
+                    double elev = vp2.GenLevel.Elevation * 0.3048; // pieds -> metres
+                    zMinM = elev - 1.5;
+                    zMaxM = elev + 4.5;
+                }
             }
 
             // Chercher un TextNoteType pour les labels
             TextNoteType noteType = GetSmallestNoteType(doc);
+
+            // Detecter le document ARCHI (contient les rooms/espaces)
+            Document docArchiAnnot = null;
+            RevitLinkInstance archiLinkInst = null;
+            foreach (RevitLinkInstance li in new FilteredElementCollector(doc).OfClass(typeof(RevitLinkInstance)))
+            {
+                Document ld = li.GetLinkDocument();
+                if (ld == null) continue;
+                string lt = ld.Title.ToLower();
+                if (lt.Contains("arc") || lt.Contains("archi")) { docArchiAnnot = ld; archiLinkInst = li; break; }
+            }
+
+            // Construire index name -> SpaceData
+            var spaceByNameAnnot = new Dictionary<string, SpaceData>();
+            foreach (var sp in data.Spaces)
+                if (sp.Name != null && !spaceByNameAnnot.ContainsKey(sp.Name)) spaceByNameAnnot[sp.Name] = sp;
 
             // Regrouper violations par espace
             var violationsBySpace = new Dictionary<string, List<ViolationData>>();
@@ -920,15 +1073,37 @@ namespace CHU_SecurityAnalyzer.Commands
                 string spaceName = kvp.Key;
                 List<ViolationData> violations = kvp.Value;
 
-                // Trouver les coordonnees de l'espace
-                double[] location = FindSpaceLocation(data, spaceName);
-                if (location == null || location.Length < 3) continue;
+                // Filtrer par plage Z (utiliser location[2] en metres depuis la violation)
+                double zM = double.NaN;
+                if (violations.Count > 0 && violations[0].Location != null && violations[0].Location.Length >= 3)
+                    zM = violations[0].Location[2];
+                else
+                {
+                    double[] loc0 = FindSpaceLocation(data, spaceName);
+                    if (loc0 != null && loc0.Length >= 3) zM = loc0[2];
+                }
+                if (double.IsNaN(zM)) continue;
+                if (zM < zMinM || zM > zMaxM) continue;
 
-                double x = location[0] / 0.3048;
-                double y = location[1] / 0.3048;
-                double z = location[2] / 0.3048;
-
-                if (z < viewZMin || z > viewZMax) continue;
+                // Trouver la position Revit reelle via revit_element_id
+                double x = double.NaN, y = double.NaN;
+                SpaceData spData = spaceByNameAnnot.ContainsKey(spaceName) ? spaceByNameAnnot[spaceName] : null;
+                if (spData != null && spData.RevitElementId > 0)
+                {
+                    ElementId eid = new ElementId(spData.RevitElementId);
+                    Element elem = null;
+                    if (docArchiAnnot != null) elem = docArchiAnnot.GetElement(eid);
+                    if (elem == null) elem = doc.GetElement(eid);
+                    if (elem != null)
+                    {
+                        XYZ pos = null;
+                        LocationPoint lp = elem.Location as LocationPoint;
+                        if (lp != null) pos = lp.Point;
+                        else { BoundingBoxXYZ bb = elem.get_BoundingBox(null); if (bb != null) pos = (bb.Min + bb.Max) / 2; }
+                        if (pos != null) { x = pos.X; y = pos.Y; }
+                    }
+                }
+                if (double.IsNaN(x) || double.IsNaN(y)) continue;
 
                 // Identifier les regles distinctes
                 var rulesInSpace = new HashSet<string>();
@@ -956,14 +1131,12 @@ namespace CHU_SecurityAnalyzer.Commands
                         switch (ruleId)
                         {
                             // === Zone 1 - Locaux Electriques ===
-                            case "ELEC-002": // Cercle 2D sur plan (famille 3D placee separement)
-                                DrawCircleSymbol(doc, view, center, s, gs);
-                                break;
-                            case "ELEC-003": // Triangle
-                                DrawTriangleSymbol(doc, view, center, s, gs);
-                                break;
-                            case "ELEC-004": // Losange
-                                DrawDiamondSymbol(doc, view, center, s, gs);
+                            // Les familles RFA (ELEC-002/003/004) sont placees comme elements de modele
+                            // -> pas de symbole 2D supplementaire
+                            case "ELEC-001":
+                            case "ELEC-002":
+                            case "ELEC-003":
+                            case "ELEC-004":
                                 break;
 
                             // === Zone 2 - Gaines Techniques ===
@@ -1007,6 +1180,16 @@ namespace CHU_SecurityAnalyzer.Commands
         //  CHARGEMENT FAMILLE .RFA SYMBOLE DE RISQUE
         // =====================================================================
 
+        /// Accepte silencieusement le chargement de famille sans boite de dialogue
+        private class SilentFamilyLoadOptions : IFamilyLoadOptions
+        {
+            public bool OnFamilyFound(bool familyInUse, out bool overwriteParameterValues)
+            { overwriteParameterValues = false; return true; }
+            public bool OnSharedFamilyFound(Family sharedFamily, bool familyInUse,
+                out FamilySource source, out bool overwriteParameterValues)
+            { source = FamilySource.Family; overwriteParameterValues = false; return true; }
+        }
+
         /// <summary>
         /// Charge la famille .rfa du symbole de risque dans le document Revit.
         /// Retourne le FamilySymbol pret a etre instancie, ou null si echec.
@@ -1025,22 +1208,14 @@ namespace CHU_SecurityAnalyzer.Commands
                 return existingSymbol;
             }
 
-            // 2. Trouver le fichier .rfa
-            string dllDir = Path.GetDirectoryName(
-                System.Reflection.Assembly.GetExecutingAssembly().Location);
-            string rfaPath = Path.Combine(dllDir, RISK_FAMILY_RFA);
-
-            if (!File.Exists(rfaPath))
-            {
-                string familiesDir = Path.Combine(PROJECT_DIR, "RevitPlugin", "Families");
-                rfaPath = Path.Combine(familiesDir, RISK_FAMILY_RFA);
-            }
+            // 2. Trouver le fichier .rfa dans le dossier ELEC/
+            string rfaPath = Path.Combine(PROJECT_DIR, "RevitPlugin", "Families", FAMILIES_ELEC_DIR, RISK_FAMILY_RFA);
 
             if (!File.Exists(rfaPath)) return null;
 
-            // 3. Charger la famille
+            // 3. Charger la famille sans boite de dialogue (IFamilyLoadOptions)
             Family family = null;
-            bool loaded = doc.LoadFamily(rfaPath, out family);
+            bool loaded = doc.LoadFamily(rfaPath, new SilentFamilyLoadOptions(), out family);
 
             if (!loaded || family == null)
             {
@@ -1064,6 +1239,35 @@ namespace CHU_SecurityAnalyzer.Commands
             ISet<ElementId> typeIds = family.GetFamilySymbolIds();
             if (typeIds.Count == 0) return null;
 
+            FamilySymbol symbol = doc.GetElement(typeIds.First()) as FamilySymbol;
+            if (symbol != null && !symbol.IsActive) symbol.Activate();
+            return symbol;
+        }
+
+        // Charge ou recupere une famille par nom, depuis un chemin RFA
+        private FamilySymbol LoadOrGetFamily(Document doc, string familyName, string rfaPath)
+        {
+            FamilySymbol existing = new FilteredElementCollector(doc)
+                .OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>()
+                .FirstOrDefault(fs => fs.FamilyName == familyName);
+            if (existing != null)
+            {
+                if (!existing.IsActive) existing.Activate();
+                return existing;
+            }
+            if (!File.Exists(rfaPath)) return null;
+            Family family = null;
+            doc.LoadFamily(rfaPath, new SilentFamilyLoadOptions(), out family);
+            if (family == null)
+            {
+                existing = new FilteredElementCollector(doc)
+                    .OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>()
+                    .FirstOrDefault(fs => fs.FamilyName == familyName);
+                if (existing != null && !existing.IsActive) existing.Activate();
+                return existing;
+            }
+            ISet<ElementId> typeIds = family.GetFamilySymbolIds();
+            if (typeIds.Count == 0) return null;
             FamilySymbol symbol = doc.GetElement(typeIds.First()) as FamilySymbol;
             if (symbol != null && !symbol.IsActive) symbol.Activate();
             return symbol;
