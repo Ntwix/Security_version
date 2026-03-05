@@ -76,6 +76,10 @@ namespace CHU_SecurityAnalyzer.Commands
                 // === Etape 6 : Lire resultats ===
                 AnalysisResults results = bridge.ReadResults(resultPath);
 
+                // === Etape 6b : GAINE-003 — Formulaire trappes d'accès (Zone 2 uniquement) ===
+                if (zone == "2")
+                    results = HandleGaine003TrappesForm(results, doc, resultPath);
+
                 // === Etape 7 : Dupliquer vues + appliquer coloration et symboles ===
                 var vizResult = ApplyVisualizationsToAllViews(doc, uiDoc, results, data);
 
@@ -103,6 +107,135 @@ namespace CHU_SecurityAnalyzer.Commands
                     $"Erreur lors de l'analyse:\n\n{ex.Message}\n\n{ex.StackTrace}");
                 return Result.Failed;
             }
+        }
+
+        // =====================================================================
+        //  GAINE-003 — FORMULAIRE TRAPPES D'ACCES
+        // =====================================================================
+
+        /// <summary>
+        /// Détecte la violation GAINE-003 en lisant directement le JSON brut,
+        /// ouvre le formulaire WPF, puis remplace la violation générique par
+        /// une violation par équipement sélectionné.
+        /// DataContractJsonSerializer ne peut pas désérialiser Dictionary[string,object]
+        /// avec des valeurs complexes — on lit donc le JSON résultat directement.
+        /// </summary>
+        private AnalysisResults HandleGaine003TrappesForm(AnalysisResults results, Document doc, string resultJsonPath)
+        {
+            if (results?.Violations == null) return results;
+
+            // Vérifier qu'il y a une violation GAINE-003 dans les résultats
+            var gaine003Marker = results.Violations.FirstOrDefault(v => v.RuleId == "GAINE-003");
+            if (gaine003Marker == null) return results;
+
+            // Lire le JSON brut pour extraire les détails (contournement limitation DataContractJsonSerializer)
+            var equipmentList = new List<CHU_SecurityAnalyzer.UI.EquipmentItem>();
+            double minW = 0.60, minH = 0.60;
+
+            try
+            {
+                string rawJson = File.ReadAllText(resultJsonPath, System.Text.Encoding.UTF8);
+                equipmentList = ParseEquipmentListFromRawJson(rawJson, out minW, out minH);
+            }
+            catch { }
+
+            if (equipmentList == null || equipmentList.Count == 0) return results;
+
+            // Ouvrir formulaire WPF
+            var dialog = new CHU_SecurityAnalyzer.UI.TrappesFormDialog(equipmentList, minW, minH);
+            bool? dialogResult = dialog.ShowDialog();
+
+            // Supprimer la violation générique GAINE-003
+            results.Violations.Remove(gaine003Marker);
+
+            if (dialogResult != true || dialog.SelectedEquipment == null
+                || dialog.SelectedEquipment.Count == 0)
+                return results;
+
+            // Créer une violation par équipement sélectionné
+            foreach (var eq in dialog.SelectedEquipment)
+            {
+                results.Violations.Add(new ViolationData
+                {
+                    RuleId      = "GAINE-003",
+                    Severity    = "MOYENNE",
+                    SpaceName   = eq.GaineName ?? eq.Name,
+                    SpaceGlobalId = eq.GaineGlobalId ?? "",
+                    Description = $"Trappe de visite requise pour : {eq.Name}",
+                    Location    = eq.Location,
+                    Recommendation =
+                        $"Prévoir une trappe {(int)(minW*100)}×{(int)(minH*100)} cm " +
+                        $"à proximité de {eq.Name} dans {eq.GaineName}."
+                });
+            }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Parse la liste d'équipements GAINE-003 directement depuis le JSON brut
+        /// en localisant le bloc "equipment_list" avec une recherche de texte simple.
+        /// </summary>
+        private List<CHU_SecurityAnalyzer.UI.EquipmentItem> ParseEquipmentListFromRawJson(
+            string rawJson, out double minW, out double minH)
+        {
+            minW = 0.60;
+            minH = 0.60;
+            var list = new List<CHU_SecurityAnalyzer.UI.EquipmentItem>();
+
+            try
+            {
+                // Extraire min_trappe_width_m et min_trappe_height_m
+                ExtractJsonDouble(rawJson, "min_trappe_width_m", ref minW);
+                ExtractJsonDouble(rawJson, "min_trappe_height_m", ref minH);
+
+                // Trouver le tableau equipment_list
+                string marker = "\"equipment_list\"";
+                int markerIdx = rawJson.IndexOf(marker);
+                if (markerIdx < 0) return list;
+
+                int arrStart = rawJson.IndexOf('[', markerIdx + marker.Length);
+                if (arrStart < 0) return list;
+
+                // Trouver la fin du tableau en comptant les crochets
+                int depth = 0;
+                int arrEnd = -1;
+                for (int i = arrStart; i < rawJson.Length; i++)
+                {
+                    if (rawJson[i] == '[') depth++;
+                    else if (rawJson[i] == ']') { depth--; if (depth == 0) { arrEnd = i; break; } }
+                }
+                if (arrEnd < 0) return list;
+
+                string arrJson = rawJson.Substring(arrStart, arrEnd - arrStart + 1);
+
+                using (var ms = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(arrJson)))
+                {
+                    var ser = new System.Runtime.Serialization.Json.DataContractJsonSerializer(
+                        typeof(List<CHU_SecurityAnalyzer.UI.EquipmentItem>));
+                    list = (List<CHU_SecurityAnalyzer.UI.EquipmentItem>)ser.ReadObject(ms);
+                }
+            }
+            catch { }
+
+            return list ?? new List<CHU_SecurityAnalyzer.UI.EquipmentItem>();
+        }
+
+        private static void ExtractJsonDouble(string json, string key, ref double value)
+        {
+            string marker = $"\"{key}\"";
+            int idx = json.IndexOf(marker);
+            if (idx < 0) return;
+            int colon = json.IndexOf(':', idx + marker.Length);
+            if (colon < 0) return;
+            int start = colon + 1;
+            while (start < json.Length && (json[start] == ' ' || json[start] == '\t')) start++;
+            int end = start;
+            while (end < json.Length && (char.IsDigit(json[end]) || json[end] == '.' || json[end] == '-')) end++;
+            if (end > start)
+                double.TryParse(json.Substring(start, end - start),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out value);
         }
 
         // =====================================================================
@@ -428,6 +561,53 @@ namespace CHU_SecurityAnalyzer.Commands
         }
 
         // =====================================================================
+        //  PLAGES Z AUTOMATIQUES PAR NIVEAU (generique, tout projet)
+        // =====================================================================
+
+        /// <summary>
+        /// Calcule automatiquement les plages Z (en metres) de chaque niveau
+        /// en lisant les elevations depuis Revit.
+        /// Plage niveau N = [elevation(N), elevation(N+1)[
+        /// Dernier niveau = [elevation(N), elevation(N) + hauteur_mediane]
+        /// </summary>
+        private Dictionary<ElementId, (double zMin, double zMax)> BuildLevelRanges(Document doc)
+        {
+            var result = new Dictionary<ElementId, (double, double)>();
+
+            // Recuperer tous les niveaux tries par elevation croissante
+            var levels = new FilteredElementCollector(doc)
+                .OfClass(typeof(Level))
+                .Cast<Level>()
+                .OrderBy(l => l.Elevation)
+                .ToList();
+
+            if (levels.Count == 0) return result;
+
+            // Convertir elevations pieds -> metres
+            var elevM = levels.Select(l => l.Elevation * 0.3048).ToList();
+
+            // Calculer hauteur mediane entre niveaux consecutifs
+            double medianHeight = 3.5; // valeur par defaut
+            if (levels.Count >= 2)
+            {
+                var heights = new List<double>();
+                for (int i = 1; i < levels.Count; i++)
+                    heights.Add(elevM[i] - elevM[i - 1]);
+                heights.Sort();
+                medianHeight = heights[heights.Count / 2];
+            }
+
+            for (int i = 0; i < levels.Count; i++)
+            {
+                double zMin = elevM[i];
+                double zMax = (i + 1 < levels.Count) ? elevM[i + 1] : elevM[i] + medianHeight;
+                result[levels[i].Id] = (zMin, zMax);
+            }
+
+            return result;
+        }
+
+        // =====================================================================
         //  NIVEAUX AVEC VIOLATIONS
         // =====================================================================
 
@@ -436,12 +616,13 @@ namespace CHU_SecurityAnalyzer.Commands
         {
             var levelElevations = new HashSet<double>();
 
-            // Plages Z en metres par mot-cle de niveau (meme logique que PlaceViolationAnnotations)
+            // Plages Z automatiques depuis Revit (generique, tout projet)
+            var levelRanges = BuildLevelRanges(doc);
             var levels = new FilteredElementCollector(doc)
                 .OfClass(typeof(Level)).Cast<Level>()
                 .OrderBy(l => l.Elevation).ToList();
 
-            // Pour chaque violation, trouver sa plage Z et quels niveaux y correspondent
+            // Pour chaque violation, trouver quel niveau contient cet espace
             var spaceZCache = new Dictionary<string, double>();
             foreach (var v in results.Violations)
             {
@@ -454,30 +635,12 @@ namespace CHU_SecurityAnalyzer.Commands
                 double zM = spaceZCache[sName];
                 if (double.IsNaN(zM)) continue;
 
-                // Associer chaque niveau dont la plage Z contient cet espace
+                // Trouver le niveau dont la plage contient zM
                 foreach (var level in levels)
                 {
-                    string lvlName = level.Name.ToUpper();
-                    double zMinM, zMaxM;
-                    if (lvlName.Contains("SS") || lvlName.Contains("SOUS"))
-                        { zMinM = -6.0; zMaxM = -0.5; }
-                    else if (lvlName.Contains("RDC") || lvlName.Contains("REZ"))
-                        { zMinM = -0.5; zMaxM = 3.5; }
-                    else if (lvlName.Contains("N1") || (lvlName.Contains("1") && !lvlName.Contains("N2") && !lvlName.Contains("N3") && !lvlName.Contains("N4")))
-                        { zMinM = 3.5; zMaxM = 7.0; }
-                    else if (lvlName.Contains("N2") || (lvlName.Contains("2") && !lvlName.Contains("N3") && !lvlName.Contains("N4")))
-                        { zMinM = 7.0; zMaxM = 10.5; }
-                    else if (lvlName.Contains("N3") || lvlName.Contains("3"))
-                        { zMinM = 10.5; zMaxM = 14.0; }
-                    else if (lvlName.Contains("N4") || lvlName.Contains("4") || lvlName.Contains("TT") || lvlName.Contains("TOIT") || lvlName.Contains("TERR"))
-                        { zMinM = 14.0; zMaxM = 25.0; }
-                    else
-                    {
-                        double elev = level.Elevation * 0.3048;
-                        zMinM = elev - 1.5; zMaxM = elev + 4.5;
-                    }
-
-                    if (zM >= zMinM && zM <= zMaxM)
+                    if (!levelRanges.ContainsKey(level.Id)) continue;
+                    var range = levelRanges[level.Id];
+                    if (zM >= range.zMin && zM < range.zMax)
                     {
                         levelElevations.Add(level.Elevation);
                         break;
@@ -700,10 +863,11 @@ namespace CHU_SecurityAnalyzer.Commands
                     "  <>  Losange rouge  = ZONE HUMIDE IP65 (ELEC-004)\n";
             if (zone == "2" || zone == "all")
                 summary +=
-                    "  <>  Losange rouge  = CHUTE OBJETS (GAINE-001)\n" +
-                    "  O  Cercle magenta = CROISEMENT CF/CFA (GAINE-002)\n" +
-                    "  /\\  Triangle vert  = TRAPPE ACCES (GAINE-003)\n" +
-                    "  /\\  Triangle marron = SURCHARGE SUPPORT (GAINE-004/005)\n";
+                    "  <>  Losange rouge   = CHUTE OBJETS (GAINE-001)\n" +
+                    "  O   Cercle magenta  = CROISEMENT CF/CFA (GAINE-002)\n" +
+                    "  /\\  Triangle vert   = TRAPPE ACCES (GAINE-003)\n" +
+                    "  +   Croix marron    = SURCHARGE SUPPORT (GAINE-004)\n" +
+                    "  []  Carre violet    = CALCUL CHARGE (GAINE-005)\n";
 
             summary += "\nLes vues originales ne sont PAS modifiees.\n" +
                 "Consultez les vues prefixees \"ZONES RISQUES -\" dans le navigateur.\n\n" +
@@ -950,11 +1114,11 @@ namespace CHU_SecurityAnalyzer.Commands
                 { "ELEC-003", new Color(255, 140, 0) },    // Orange
                 { "ELEC-004", new Color(255, 0, 0) },      // Rouge
                 // Zone 2 - Gaines Techniques
-                { "GAINE-001", new Color(200, 0, 0) },     // Rouge fonce (chute objets)
-                { "GAINE-002", new Color(255, 0, 255) },   // Magenta (croisement CF/CFA)
-                { "GAINE-003", new Color(0, 150, 0) },     // Vert (trappes acces)
-                { "GAINE-004", new Color(180, 100, 0) },   // Marron (surcharge supports)
-                { "GAINE-005", new Color(180, 100, 0) }    // Marron (calcul charge)
+                { "GAINE-001", new Color(200, 0, 0) },     // Rouge fonce  - Losange  (chute objets)
+                { "GAINE-002", new Color(255, 0, 255) },   // Magenta      - Cercle   (croisement CF/CFA)
+                { "GAINE-003", new Color(0, 150, 0) },     // Vert         - Triangle (trappes acces)
+                { "GAINE-004", new Color(180, 100, 0) },   // Marron       - Croix    (surcharge supports)
+                { "GAINE-005", new Color(100, 0, 180) }    // Violet       - Carre    (calcul charge)
             };
 
             // Chercher la categorie Lines
@@ -1009,31 +1173,24 @@ namespace CHU_SecurityAnalyzer.Commands
         {
             int count = 0;
 
-            // Determiner la plage Z (en metres) des espaces a afficher dans cette vue
-            // selon le nom du niveau associe a la vue
+            // Determiner la plage Z (en metres) automatiquement depuis Revit
             double zMinM = double.MinValue;
             double zMaxM = double.MaxValue;
 
+            var levelRangesAnnot = BuildLevelRanges(doc);
             ViewPlan vp2 = view as ViewPlan;
             if (vp2 != null && vp2.GenLevel != null)
             {
-                string lvlName = vp2.GenLevel.Name.ToUpper();
-                if (lvlName.Contains("SS") || lvlName.Contains("SOUS"))
-                    { zMinM = -6.0; zMaxM = -0.5; }
-                else if (lvlName.Contains("RDC") || lvlName.Contains("REZ"))
-                    { zMinM = -0.5; zMaxM = 3.5; }
-                else if (lvlName.Contains("N1") || (lvlName.Contains("1") && !lvlName.Contains("N2") && !lvlName.Contains("N3") && !lvlName.Contains("N4")))
-                    { zMinM = 3.5; zMaxM = 7.0; }
-                else if (lvlName.Contains("N2") || (lvlName.Contains("2") && !lvlName.Contains("N3") && !lvlName.Contains("N4")))
-                    { zMinM = 7.0; zMaxM = 10.5; }
-                else if (lvlName.Contains("N3") || lvlName.Contains("3"))
-                    { zMinM = 10.5; zMaxM = 14.0; }
-                else if (lvlName.Contains("N4") || lvlName.Contains("4") || lvlName.Contains("TT") || lvlName.Contains("TOIT") || lvlName.Contains("TERR"))
-                    { zMinM = 14.0; zMaxM = 25.0; }
+                if (levelRangesAnnot.ContainsKey(vp2.GenLevel.Id))
+                {
+                    var range = levelRangesAnnot[vp2.GenLevel.Id];
+                    zMinM = range.zMin;
+                    zMaxM = range.zMax;
+                }
                 else
                 {
-                    // Fallback : utiliser l'elevation du niveau pour estimer la plage
-                    double elev = vp2.GenLevel.Elevation * 0.3048; // pieds -> metres
+                    // Fallback si niveau non trouve
+                    double elev = vp2.GenLevel.Elevation * 0.3048;
                     zMinM = elev - 1.5;
                     zMaxM = elev + 4.5;
                 }
@@ -1058,7 +1215,7 @@ namespace CHU_SecurityAnalyzer.Commands
             foreach (var sp in data.Spaces)
                 if (sp.Name != null && !spaceByNameAnnot.ContainsKey(sp.Name)) spaceByNameAnnot[sp.Name] = sp;
 
-            // Regrouper violations par espace
+            // Regrouper violations par espace (pour GAINE-001/002/003 basees sur les espaces)
             var violationsBySpace = new Dictionary<string, List<ViolationData>>();
             foreach (var v in results.Violations)
             {
@@ -1073,20 +1230,56 @@ namespace CHU_SecurityAnalyzer.Commands
                 string spaceName = kvp.Key;
                 List<ViolationData> violations = kvp.Value;
 
-                // Filtrer par plage Z (utiliser location[2] en metres depuis la violation)
-                double zM = double.NaN;
+                // GAINE-004 et GAINE-005 : dessiner chaque violation individuellement
+                // (space_name = nom du cable, pas d'un espace => position directe)
+                bool isPerViolation = violations.All(v =>
+                    v.RuleId == "GAINE-004" || v.RuleId == "GAINE-005");
+
+                if (isPerViolation)
+                {
+                    foreach (var v in violations)
+                    {
+                        double[] loc = v.Location;
+                        if (loc == null || loc.Length < 2) continue;
+                        if (loc[0] == 0 && loc[1] == 0) continue;
+
+                        double zM = loc.Length >= 3 ? loc[2] : double.NaN;
+                        if (double.IsNaN(zM) || zM < zMinM || zM > zMaxM) continue;
+
+                        double x = loc[0] / 0.3048;
+                        double y = loc[1] / 0.3048;
+                        XYZ center = new XYZ(x, y, 0);
+
+                        GraphicsStyle gs = lineStyles.ContainsKey(v.RuleId) ? lineStyles[v.RuleId] : null;
+                        double s = 2.0; // plus grand pour mieux voir (~60cm)
+
+                        try
+                        {
+                            if (v.RuleId == "GAINE-004")
+                                DrawCrossSymbol(doc, view, center, s, gs);
+                            else
+                                DrawSquareSymbol(doc, view, center, s, gs);
+                            count++;
+                        }
+                        catch { }
+                    }
+                    continue;
+                }
+
+                // Pour les autres règles : logique par espace (GAINE-001/002/003, ELEC-xxx)
+                double zMspace = double.NaN;
                 if (violations.Count > 0 && violations[0].Location != null && violations[0].Location.Length >= 3)
-                    zM = violations[0].Location[2];
+                    zMspace = violations[0].Location[2];
                 else
                 {
                     double[] loc0 = FindSpaceLocation(data, spaceName);
-                    if (loc0 != null && loc0.Length >= 3) zM = loc0[2];
+                    if (loc0 != null && loc0.Length >= 3) zMspace = loc0[2];
                 }
-                if (double.IsNaN(zM)) continue;
-                if (zM < zMinM || zM > zMaxM) continue;
+                if (double.IsNaN(zMspace)) continue;
+                if (zMspace < zMinM || zMspace > zMaxM) continue;
 
                 // Trouver la position Revit reelle via revit_element_id
-                double x = double.NaN, y = double.NaN;
+                double xs = double.NaN, ys = double.NaN;
                 SpaceData spData = spaceByNameAnnot.ContainsKey(spaceName) ? spaceByNameAnnot[spaceName] : null;
                 if (spData != null && spData.RevitElementId > 0)
                 {
@@ -1100,23 +1293,31 @@ namespace CHU_SecurityAnalyzer.Commands
                         LocationPoint lp = elem.Location as LocationPoint;
                         if (lp != null) pos = lp.Point;
                         else { BoundingBoxXYZ bb = elem.get_BoundingBox(null); if (bb != null) pos = (bb.Min + bb.Max) / 2; }
-                        if (pos != null) { x = pos.X; y = pos.Y; }
+                        if (pos != null) { xs = pos.X; ys = pos.Y; }
                     }
                 }
-                if (double.IsNaN(x) || double.IsNaN(y)) continue;
+                // Fallback location directe
+                if ((double.IsNaN(xs) || double.IsNaN(ys)) && violations.Count > 0)
+                {
+                    double[] loc = violations[0].Location;
+                    if (loc != null && loc.Length >= 2 && (loc[0] != 0 || loc[1] != 0))
+                    {
+                        xs = loc[0] / 0.3048;
+                        ys = loc[1] / 0.3048;
+                    }
+                }
+                if (double.IsNaN(xs) || double.IsNaN(ys)) continue;
 
-                // Identifier les regles distinctes
+                // Identifier les regles distinctes dans cet espace
                 var rulesInSpace = new HashSet<string>();
                 foreach (var v in violations)
-                {
                     if (v.RuleId != null) rulesInSpace.Add(v.RuleId);
-                }
 
                 int symbolIndex = 0;
                 foreach (string ruleId in rulesInSpace)
                 {
                     double offsetX = symbolIndex * SYMBOL_SPACING;
-                    XYZ center = new XYZ(x + offsetX, y, 0);
+                    XYZ center = new XYZ(xs + offsetX, ys, 0);
 
                     int ruleCount = violations.Count(v => v.RuleId == ruleId);
                     string label = GetSymbolLabel(ruleId, ruleCount);
@@ -1125,32 +1326,22 @@ namespace CHU_SecurityAnalyzer.Commands
 
                     try
                     {
-                        // Dessiner le symbole geometrique
                         double s = 1.5; // taille du symbole en pieds (~45cm)
 
                         switch (ruleId)
                         {
-                            // === Zone 1 - Locaux Electriques ===
-                            // Les familles RFA (ELEC-002/003/004) sont placees comme elements de modele
-                            // -> pas de symbole 2D supplementaire
                             case "ELEC-001":
                             case "ELEC-002":
                             case "ELEC-003":
                             case "ELEC-004":
                                 break;
-
-                            // === Zone 2 - Gaines Techniques ===
-                            case "GAINE-001": // Losange rouge (chute objets)
+                            case "GAINE-001":
                                 DrawDiamondSymbol(doc, view, center, s, gs);
                                 break;
-                            case "GAINE-002": // Cercle magenta (croisement CF/CFA)
+                            case "GAINE-002":
                                 DrawCircleSymbol(doc, view, center, s, gs);
                                 break;
-                            case "GAINE-003": // Triangle vert (trappes acces)
-                                DrawTriangleSymbol(doc, view, center, s, gs);
-                                break;
-                            case "GAINE-004": // Triangle marron (surcharge)
-                            case "GAINE-005":
+                            case "GAINE-003":
                                 DrawTriangleSymbol(doc, view, center, s, gs);
                                 break;
                         }
@@ -1337,6 +1528,43 @@ namespace CHU_SecurityAnalyzer.Commands
             DrawLineInView(doc, view,
                 new XYZ(center.X, center.Y - s * 0.35, 0),
                 new XYZ(center.X, center.Y - s * 0.45, 0), gs);
+        }
+
+        /// <summary>Croix (+) avec cercle interieur — GAINE-004 Surcharge supports (marron)</summary>
+        private void DrawCrossSymbol(Document doc, Autodesk.Revit.DB.View view, XYZ center, double size, GraphicsStyle gs)
+        {
+            double s = size;
+            // Bras horizontaux et verticaux
+            DrawLineInView(doc, view, new XYZ(center.X - s, center.Y, 0), new XYZ(center.X + s, center.Y, 0), gs);
+            DrawLineInView(doc, view, new XYZ(center.X, center.Y - s, 0), new XYZ(center.X, center.Y + s, 0), gs);
+            // Petit cercle au centre pour distinguer de la croix simple
+            int seg = 8;
+            double r = s * 0.35;
+            for (int i = 0; i < seg; i++)
+            {
+                double a1 = 2 * Math.PI * i / seg;
+                double a2 = 2 * Math.PI * (i + 1) / seg;
+                DrawLineInView(doc, view,
+                    new XYZ(center.X + r * Math.Cos(a1), center.Y + r * Math.Sin(a1), 0),
+                    new XYZ(center.X + r * Math.Cos(a2), center.Y + r * Math.Sin(a2), 0), gs);
+            }
+        }
+
+        /// <summary>Carre avec diagonales — GAINE-005 Calcul charge (violet)</summary>
+        private void DrawSquareSymbol(Document doc, Autodesk.Revit.DB.View view, XYZ center, double size, GraphicsStyle gs)
+        {
+            double s = size * 0.85;
+            XYZ tl = new XYZ(center.X - s, center.Y + s, 0);
+            XYZ tr = new XYZ(center.X + s, center.Y + s, 0);
+            XYZ br = new XYZ(center.X + s, center.Y - s, 0);
+            XYZ bl = new XYZ(center.X - s, center.Y - s, 0);
+            // Contour du carre
+            DrawLineInView(doc, view, tl, tr, gs);
+            DrawLineInView(doc, view, tr, br, gs);
+            DrawLineInView(doc, view, br, bl, gs);
+            DrawLineInView(doc, view, bl, tl, gs);
+            // Diagonale (symbole de charge)
+            DrawLineInView(doc, view, tl, br, gs);
         }
 
         private void DrawLineInView(Document doc, Autodesk.Revit.DB.View view, XYZ start, XYZ end, GraphicsStyle gs)

@@ -83,7 +83,26 @@ class ELEC004ShowerZoneChecker:
         wet_zone_equipment = self._find_equipment_in_space(space, equipment)
 
         if not wet_zone_equipment:
-            logger.debug(f"  {space_name}: Aucun équipement")
+            # Zone humide sans équipements modélisés (pas de maquette ELEC)
+            # → signaler quand même : toute zone humide nécessite vérification IP65
+            violation = {
+                "rule_id": self.RULE_ID,
+                "severity": "CRITICAL",
+                "space_name": space_name,
+                "space_global_id": space['global_id'],
+                "description": "Zone humide - vérification IP65 requise",
+                "details": {
+                    "note": "Aucun équipement modélisé (maquette ELEC absente)",
+                    "required_ip_rating": self.required_ip_rating,
+                    "required_material": self.required_material
+                },
+                "location": space['centroid'],
+                "recommendation": (f"Vérifier que tous les équipements électriques de cette zone humide "
+                                   f"sont {self.required_ip_rating} en {self.required_material}")
+            }
+            self.violations.append(violation)
+            logger.rule_violation(self.RULE_ID, space_name,
+                                f"Zone humide sans équipements modélisés - IP65 à vérifier")
             return
 
         # Vérifier chaque équipement

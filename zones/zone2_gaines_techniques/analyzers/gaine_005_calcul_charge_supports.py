@@ -1,11 +1,18 @@
 """
 ============================================================================
-GAINE-005 - Calcul charge des supports
+GAINE-005 - Calcul de charge cumulée des chemins de câbles
 ============================================================================
-Rule: The total load handled by each support is computed from the length
-and weight of the cables mounted on it.
+Règle: La charge cumulée (CFO + CFA + Incendie) sur un même chemin de câbles
+ne doit pas dépasser la capacité admissible du support (avec marge sécurité).
 
-Severity: HAUTE
+Contexte CHU Ibn Sina:
+- Chemins de câbles "Chemin de câbles avec raccords" (IfcCableCarrierSegment)
+- Types : CDC CFO (1.4 kg/m), CDC CFA (0.6 kg/m), CDC Incendie (0.6 kg/m)
+- Les chemins de câbles superposés (même X/Y, Z différents) sont analysés
+  individuellement — chaque segment est son propre support.
+- Charge estimée = longueur × poids/m selon type de service
+
+Sévérité: HAUTE
 """
 
 import json
@@ -15,17 +22,6 @@ from pathlib import Path
 from shared.logger import logger
 from shared.geometry_utils import GeometryUtils
 
-DEFAULT_SUPPORT_KEYWORDS = [
-    "chemin de cables", "chemin de câbles", "support", "echelle a cables", "goulotte",
-    "tablette", "rail", "cable tray", "ladder", "pfu"
-]
-DEFAULT_SUPPORT_IFC_TYPES = [
-    "IfcCableCarrierSegment", "IfcCableCarrierFitting", "IfcDiscreteAccessory"
-]
-DEFAULT_CABLE_KEYWORDS = ["cable", "câble", "fil", "conducteur", "wire", "cdc"]
-DEFAULT_CABLE_IFC_TYPES = ["IfcCableSegment", "IfcCableFitting"]
-DEFAULT_CF_KEYWORDS = ["courant fort", "cfo", "cdc cfo", "power", "puissance", "ht", "bt", "tgbt"]
-DEFAULT_CFA_KEYWORDS = ["courant faible", "cfa", "cdc cfa", "cdc incendie", "data", "vdi", "rj45", "fibre", "fiber"]
 DEFAULT_LENGTH_KEYS = ["Length", "Longueur", "Length_m", "Longueur_m"]
 DEFAULT_WEIGHT_KEYS = ["Weight", "Poids", "Masse"]
 
@@ -42,19 +38,16 @@ class GAINE005CalculChargeSupportsChecker:
         self.violations = []
 
         self.safety_margin = 0.20
-        self.default_support_capacity = 90
+        self.default_support_capacity = 90.0
         self.default_weight_per_m = 1.0
         self.cf_weight_per_m = 1.4
         self.cfa_weight_per_m = 0.6
         self.max_cable_distance = 0.6
         self.length_keys = list(DEFAULT_LENGTH_KEYS)
         self.weight_keys = list(DEFAULT_WEIGHT_KEYS)
-        self.support_keywords = list(DEFAULT_SUPPORT_KEYWORDS)
-        self.support_ifc_types = list(DEFAULT_SUPPORT_IFC_TYPES)
-        self.cable_keywords = list(DEFAULT_CABLE_KEYWORDS)
-        self.cable_ifc_types = list(DEFAULT_CABLE_IFC_TYPES)
-        self.cf_keywords = list(DEFAULT_CF_KEYWORDS)
-        self.cfa_keywords = list(DEFAULT_CFA_KEYWORDS)
+        self.cf_keywords = ["cfo", "cdc cfo", "courant fort", "power", "ht", "bt", "tgbt"]
+        self.cfa_keywords = ["cfa", "cdc cfa", "cdc incendie", "courant faible", "data", "vdi",
+                             "rj45", "fibre", "fiber"]
 
         self.load_config()
         logger.info(f" {self.RULE_ID} Checker initialise")
@@ -75,12 +68,6 @@ class GAINE005CalculChargeSupportsChecker:
             self.max_cable_distance = float(params.get('max_cable_distance_m', 0.6))
             self.length_keys = list(params.get('length_property_keys', DEFAULT_LENGTH_KEYS))
             self.weight_keys = list(params.get('weight_property_keys', DEFAULT_WEIGHT_KEYS))
-            self.support_keywords = [kw.lower() for kw in params.get('support_keywords', DEFAULT_SUPPORT_KEYWORDS)]
-            self.cable_keywords = [kw.lower() for kw in params.get('cable_keywords', DEFAULT_CABLE_KEYWORDS)]
-            self.cf_keywords = [kw.lower() for kw in params.get('courant_fort_keywords', DEFAULT_CF_KEYWORDS)]
-            self.cfa_keywords = [kw.lower() for kw in params.get('courant_faible_keywords', DEFAULT_CFA_KEYWORDS)]
-            self.support_ifc_types = list(params.get('support_ifc_types', DEFAULT_SUPPORT_IFC_TYPES))
-            self.cable_ifc_types = list(params.get('cable_ifc_types', DEFAULT_CABLE_IFC_TYPES))
 
         except Exception as e:
             logger.error(f"  Erreur config {self.RULE_ID}: {str(e)}")
@@ -89,119 +76,179 @@ class GAINE005CalculChargeSupportsChecker:
                 slabs: List[Dict], space_types: Dict) -> List[Dict]:
         """Lance analyse GAINE-005"""
         logger.analysis_start(self.RULE_ID)
-
         self.violations = []
 
-        concerned_spaces = []
-        concerned_spaces.extend(space_types.get('gaine_technique', []))
-        concerned_spaces.extend(space_types.get('local_technique', []))
-        concerned_spaces.extend(space_types.get('faux_plafond', []))
+        # Tous les chemins de câbles
+        cable_trays = [eq for eq in equipment if self._is_cable_tray(eq)]
 
-        if not concerned_spaces:
-            logger.info(f"    Aucun espace concerne pour {self.RULE_ID}")
+        if not cable_trays:
+            logger.info(f"    Aucun chemin de câbles trouvé pour {self.RULE_ID}")
             return self.violations
 
-        logger.info(f"   Analyse {len(concerned_spaces)} espaces pour calcul charge supports...")
+        logger.info(f"   {len(cable_trays)} chemins de câbles — analyse charge cumulée...")
 
-        for space in concerned_spaces:
-            self._analyze_space(space, equipment)
+        # Grouper les chemins de câbles superposés (même position XY, tolérance 0.6m)
+        # Chaque groupe = un même "point de support" potentiel
+        groups = self._group_overlapping_trays(cable_trays)
+        logger.info(f"   {len(groups)} groupes de chemins superposés détectés")
+
+        for group in groups:
+            self._check_group_load(group)
 
         logger.analysis_complete(self.RULE_ID, len(self.violations))
         return self.violations
 
-    def _analyze_space(self, space: Dict, equipment: List[Dict]):
-        """Analyse supports et cables dans un espace"""
-        supports = []
-        cables = []
+    def _group_overlapping_trays(self, cable_trays: List[Dict]) -> List[List[Dict]]:
+        """
+        Regroupe les chemins de câbles qui se superposent (même XY, Z différent).
+        Un groupe = plusieurs CDC empilés au même endroit → charge cumulée sur le support.
+        """
+        groups = []
+        used = set()
 
-        for eq in equipment:
-            if not GeometryUtils.is_point_in_bbox(
-                eq.get('centroid', (0, 0, 0)),
-                space.get('bbox_min', (0, 0, 0)),
-                space.get('bbox_max', (0, 0, 0))
-            ):
+        for i, tray in enumerate(cable_trays):
+            if i in used:
                 continue
+            group = [tray]
+            used.add(i)
+            c1 = tray.get('centroid', (0, 0, 0))
 
-            if self._is_support(eq):
-                supports.append(eq)
-                continue
+            for j, other in enumerate(cable_trays):
+                if j in used:
+                    continue
+                c2 = other.get('centroid', (0, 0, 0))
+                # Même position XY (tolérance max_cable_distance), Z peut différer
+                dist_xy = ((c1[0] - c2[0]) ** 2 + (c1[1] - c2[1]) ** 2) ** 0.5
+                if dist_xy <= self.max_cable_distance:
+                    group.append(other)
+                    used.add(j)
 
-            if self._is_cable(eq):
-                cables.append(eq)
+            groups.append(group)
 
-        if not supports or not cables:
+        return groups
+
+    def _check_group_load(self, group: List[Dict]):
+        """Vérifie la charge cumulée d'un groupe de chemins superposés"""
+        if not group:
             return
 
-        for support in supports:
-            self._check_support_load(space, support, cables)
+        total_weight = 0.0
+        total_length = 0.0
+        breakdown = []
 
-    def _check_support_load(self, space: Dict, support: Dict, cables: List[Dict]):
-        """Verifie la charge par support"""
-        support_name = support.get('name', 'Inconnu')
-        properties = support.get('properties', {})
+        for tray in group:
+            length = self._extract_length(tray)
+            weight = self._extract_weight(tray)
+            if weight is None or weight <= 0:
+                weight = length * self._select_weight_per_meter(tray)
 
-        capacity = self._extract_capacity(properties)
-        if capacity is None or capacity <= 0:
-            capacity = self.default_support_capacity
+            total_weight += weight
+            total_length += length
+            breakdown.append({
+                "name": tray.get('name', 'Inconnu'),
+                "service_type": self._get_service_type(tray),
+                "length_m": round(length, 2),
+                "weight_kg": round(weight, 1),
+            })
 
-        total_weight, total_length, cable_count = self._calculate_cable_load(support, cables)
-        if cable_count == 0:
-            return
-
-        safe_capacity = capacity * (1 - self.safety_margin)
+        safe_capacity = self.default_support_capacity * (1 - self.safety_margin)
 
         if total_weight > safe_capacity:
             excess = total_weight - safe_capacity
+            ref_tray = group[0]
+
             violation = {
                 "rule_id": self.RULE_ID,
                 "severity": "HAUTE",
-                "space_name": space.get('name', 'Inconnu'),
-                "space_global_id": space.get('global_id', ''),
-                "description": "Charge des cables superieure a la capacite declaree du support",
+                "space_name": ref_tray.get('name', 'Inconnu'),
+                "space_global_id": ref_tray.get('global_id', ''),
+                "description": (
+                    f"Charge cumulée ({len(group)} chemins superposés) = {total_weight:.1f}kg "
+                    f"> capacité admissible {safe_capacity:.1f}kg"
+                ),
                 "details": {
-                    "support_name": support_name,
+                    "nb_trays": len(group),
                     "total_cable_weight_kg": round(total_weight, 1),
                     "total_cable_length_m": round(total_length, 1),
-                    "cable_count": cable_count,
-                    "support_capacity_kg": round(capacity, 1),
+                    "support_capacity_kg": round(self.default_support_capacity, 1),
                     "safe_capacity_kg": round(safe_capacity, 1),
-                    "excess_kg": round(excess, 1)
+                    "excess_kg": round(excess, 1),
+                    "breakdown": breakdown,
                 },
-                "location": support.get('centroid', (0, 0, 0)),
-                "recommendation": "Redistribuer les cables ou renforcer le support pour respecter la marge de securite"
+                "location": ref_tray.get('centroid', (0, 0, 0)),
+                "recommendation": (
+                    f"Renforcer le support ou répartir les chemins de câbles. "
+                    f"Excès: {excess:.1f}kg. "
+                    f"Détail: {', '.join(b['name'] + ' ' + b['service_type'] for b in breakdown)}"
+                )
             }
             self.violations.append(violation)
-            logger.rule_violation(self.RULE_ID, support_name,
-                                 f"{total_weight:.1f}kg > {safe_capacity:.1f}kg")
+            logger.rule_violation(
+                self.RULE_ID,
+                ref_tray.get('name', 'Inconnu'),
+                f"{len(group)} CDC superposés — {total_weight:.1f}kg > {safe_capacity:.1f}kg"
+            )
         else:
-            logger.rule_passed(self.RULE_ID, support_name)
+            logger.rule_passed(self.RULE_ID, group[0].get('name', 'Inconnu'))
 
-    def _calculate_cable_load(self, support: Dict, cables: List[Dict]):
-        """Somme des poids et longueurs des cables autour du support"""
-        total_weight = 0.0
-        total_length = 0.0
-        count = 0
-        support_centroid = support.get('centroid', (0, 0, 0))
+    def _is_cable_tray(self, equipment: Dict) -> bool:
+        """Vérifie si un équipement est un chemin de câbles"""
+        if equipment.get('ifc_type') == 'IfcCableCarrierSegment':
+            return True
+        name = equipment.get('name', '').lower()
+        return 'chemin de c' in name or 'cable tray' in name
 
-        for cable in cables:
-            cable_centroid = cable.get('centroid', (0, 0, 0))
-            distance = GeometryUtils.calculate_distance_3d(support_centroid, cable_centroid)
-            if distance > self.max_cable_distance:
-                continue
+    def _get_service_type(self, tray: Dict) -> str:
+        """Extrait le type de service depuis les propriétés ou le nom"""
+        props = self._props_to_dict(tray.get('properties', {}))
+        service = props.get('Type de service', '') or props.get('Service Type', '') or ''
+        if service:
+            return service
+        name = tray.get('name', '').lower()
+        if 'incendie' in name:
+            return 'CDC Incendie'
+        for kw in self.cfa_keywords:
+            if kw in name:
+                return 'CDC CFA'
+        for kw in self.cf_keywords:
+            if kw in name:
+                return 'CDC CFO'
+        return 'Inconnu'
 
-            length = self._extract_length(cable)
-            if length <= 0:
-                length = cable.get('max_dimension_m') or 1.0
+    def _select_weight_per_meter(self, tray: Dict) -> float:
+        """Sélectionne le poids/m selon le type de service"""
+        service = self._get_service_type(tray).lower()
+        name = tray.get('name', '').lower()
+        combined = f"{service} {name}"
+        for kw in self.cfa_keywords:
+            if kw in combined:
+                return self.cfa_weight_per_m
+        for kw in self.cf_keywords:
+            if kw in combined:
+                return self.cf_weight_per_m
+        return self.default_weight_per_m
 
-            weight = self._extract_weight(cable)
-            if weight is None or weight <= 0:
-                weight = length * self._select_weight_per_meter(cable)
+    def _extract_length(self, tray: Dict) -> float:
+        """Extrait la longueur du chemin de câbles"""
+        props = self._props_to_dict(tray.get('properties', {}))
+        for key in self.length_keys:
+            if key in props:
+                value = self._safe_float(props[key])
+                if value and value > 0:
+                    return value
+        # max_dimension_m = longueur réelle extraite depuis Revit (CURVE_ELEM_LENGTH)
+        fallback = tray.get('max_dimension_m')
+        return fallback if fallback and fallback > 0 else 1.0
 
-            total_length += length
-            total_weight += weight
-            count += 1
-
-        return total_weight, total_length, count
+    def _extract_weight(self, tray: Dict) -> Optional[float]:
+        """Extrait le poids déclaré si disponible"""
+        props = self._props_to_dict(tray.get('properties', {}))
+        for key in self.weight_keys:
+            if key in props:
+                value = self._safe_float(props[key])
+                if value and value > 0:
+                    return value
+        return None
 
     @staticmethod
     def _props_to_dict(props) -> Dict:
@@ -216,71 +263,11 @@ class GAINE005CalculChargeSupportsChecker:
             return result
         return {}
 
-    def _extract_length(self, cable: Dict) -> float:
-        props = self._props_to_dict(cable.get('properties', {}))
-        for key in self.length_keys:
-            if key in props:
-                value = self._safe_float(props[key])
-                if value and value > 0:
-                    return value
-        fallback = cable.get('max_dimension_m')
-        return fallback if fallback else 1.0
-
-    def _extract_weight(self, cable: Dict) -> Optional[float]:
-        props = self._props_to_dict(cable.get('properties', {}))
-        for key in self.weight_keys:
-            if key in props:
-                value = self._safe_float(props[key])
-                if value and value > 0:
-                    return value
-        return None
-
-    def _select_weight_per_meter(self, cable: Dict) -> float:
-        combined = f"{cable.get('name', '')} {cable.get('ifc_type', '')}".lower()
-        # CFA d'abord (plus spécifique, évite que 'cf' matche 'cfa')
-        for kw in self.cfa_keywords:
-            if kw in combined:
-                return self.cfa_weight_per_m
-        for kw in self.cf_keywords:
-            if kw in combined:
-                return self.cf_weight_per_m
-        return self.default_weight_per_m
-
-    def _is_support(self, equipment: Dict) -> bool:
-        name = equipment.get('name', '').lower()
-        if any(kw in name for kw in self.support_keywords):
-            return True
-        if equipment.get('ifc_type') in self.support_ifc_types:
-            return True
-        return False
-
-    def _is_cable(self, equipment: Dict) -> bool:
-        name = equipment.get('name', '').lower()
-        if any(kw in name for kw in self.cable_keywords):
-            return True
-        if equipment.get('ifc_type') in self.cable_ifc_types:
-            return True
-        return False
-
-    def _extract_capacity(self, properties) -> Optional[float]:
-        props = self._props_to_dict(properties)
-        capacity_keys = ['LoadCapacity', 'ChargeAdmissible', 'MaxLoad',
-                         'Capacite', 'Capacity', 'ChargeMax']
-        for key in capacity_keys:
-            if key in props:
-                value = self._safe_float(props[key])
-                if value and value > 0:
-                    return value
-        return None
-
     def _safe_float(self, value, default: Optional[float] = None) -> Optional[float]:
         if value is None:
             return default
         try:
-            text = str(value).strip()
-            if not text:
-                return default
-            text = text.replace(',', '.')
-            return float(text)
-        except:
+            text = str(value).strip().replace(',', '.')
+            return float(text) if text else default
+        except Exception:
             return default

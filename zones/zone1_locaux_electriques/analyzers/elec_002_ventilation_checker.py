@@ -75,39 +75,49 @@ class ELEC002VentilationChecker:
         if floor_area < self.MIN_FLOOR_AREA_M2:
             return
 
-        # Compter équipements dans l'espace
-        space_bbox_min = space['bbox_min']
-        space_bbox_max = space['bbox_max']
+        # Compter équipements dans l'espace si disponibles (maquette ELEC)
+        space_bbox_min = space.get('bbox_min')
+        space_bbox_max = space.get('bbox_max')
 
         equipment_count = 0
         equipment_names = []
 
-        for eq in equipment:
-            if GeometryUtils.is_point_in_bbox(eq['centroid'], space_bbox_min, space_bbox_max):
-                equipment_count += 1
-                equipment_names.append(eq['name'])
+        if space_bbox_min and space_bbox_max and equipment:
+            for eq in equipment:
+                if GeometryUtils.is_point_in_bbox(eq['centroid'], space_bbox_min, space_bbox_max):
+                    equipment_count += 1
+                    equipment_names.append(eq['name'])
 
-        if equipment_count == 0:
-            return
+        # Un local technique contient par définition des équipements électriques
+        # → signaler le besoin de ventilation même sans maquette ELEC
+        if equipment_count > 0:
+            description = "Local technique nécessitant une ventilation"
+            recommendation = (f"Prévoir une ventilation pour ce local technique "
+                              f"({equipment_count} équipements, {round(floor_area, 2)} m²)")
+            detail_note = f"Equipements modélisés: {equipment_count}"
+        else:
+            description = "Local technique sans maquette ELEC - ventilation à vérifier"
+            recommendation = (f"Prévoir une ventilation pour ce local technique "
+                              f"({round(floor_area, 2)} m²) - aucun équipement modélisé")
+            detail_note = "Aucun équipement modélisé (maquette ELEC absente)"
 
-        # Local technique avec des équipements → signaler besoin de ventilation
         violation = {
             "rule_id": self.RULE_ID,
             "severity": "IMPORTANT",
             "space_name": space_name,
             "space_global_id": space['global_id'],
-            "description": "Local technique nécessitant une ventilation",
+            "description": description,
             "details": {
                 "floor_area_m2": round(floor_area, 2),
                 "equipment_count": equipment_count,
-                "equipment_list": equipment_names[:10]
+                "equipment_list": equipment_names[:10],
+                "note": detail_note
             },
             "location": space['centroid'],
-            "recommendation": f"Prévoir une ventilation pour ce local technique "
-                             f"({equipment_count} équipements, {round(floor_area, 2)} m²)"
+            "recommendation": recommendation
         }
 
         self.violations.append(violation)
         logger.rule_violation(self.RULE_ID, space_name,
-                            f"Ventilation requise - {equipment_count} équipements, {floor_area:.1f} m²")
+                            f"Ventilation requise - {detail_note}, {floor_area:.1f} m²")
 

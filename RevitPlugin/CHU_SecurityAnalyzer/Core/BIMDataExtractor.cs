@@ -136,14 +136,14 @@ namespace CHU_SecurityAnalyzer.Core
             Document sourceDoc = _docElec ?? _docArchi;
 
             // Catégories d'équipements électriques
-            // NOTE: OST_CableTray et OST_Conduit exclus volontairement —
-            // ils contiennent des milliers de segments et ralentissent Revit.
-            // Les règles Zone 1 (ELEC-001 à 004) ne les utilisent pas.
+            // OST_CableTray inclus pour Zone 2 (GAINE-004/005) — chemins de câbles CHU Ibn Sina
+            // modélisés comme "Chemin de câbles avec raccords" (CDC CFO / CDC CFA / CDC Incendie)
             var categories = new[]
             {
                 BuiltInCategory.OST_ElectricalEquipment,
                 BuiltInCategory.OST_ElectricalFixtures,
                 BuiltInCategory.OST_MechanicalEquipment,
+                BuiltInCategory.OST_CableTray,
             };
 
             foreach (var cat in categories)
@@ -237,6 +237,30 @@ namespace CHU_SecurityAnalyzer.Core
             var properties = GetElementProperties(elem);
             double? weight = ExtractWeight(properties);
 
+            // Pour les chemins de câbles (OST_CableTray) : récupérer longueur réelle
+            // Le paramètre "Length" Revit est en pieds internes → convertir en mètres
+            bool isCableTray = elem.Category != null &&
+                (BuiltInCategory)elem.Category.Id.IntegerValue == BuiltInCategory.OST_CableTray;
+            if (isCableTray)
+            {
+                double lengthM = ExtractCableTrayLength(elem);
+                if (lengthM > 0)
+                    maxDim = lengthM;
+
+                // Ajouter Type de service depuis paramètre instance ou type
+                string serviceType = GetParamValue(elem, "Type de service")
+                                  ?? GetParamValue(elem, "Service Type")
+                                  ?? GetParamValue(elem, "System Type")
+                                  ?? "";
+                if (!string.IsNullOrEmpty(serviceType) && !properties.ContainsKey("Type de service"))
+                    properties["Type de service"] = serviceType;
+
+                // Niveau CEG (colonne A de la nomenclature = paramètre "Niveau" ou "Level")
+                string niveau = GetParamValue(elem, "Niveau") ?? GetParamValue(elem, "Level") ?? "";
+                if (!string.IsNullOrEmpty(niveau) && !properties.ContainsKey("Niveau"))
+                    properties["Niveau"] = niveau;
+            }
+
             return new EquipmentData
             {
                 GlobalId = elem.UniqueId,
@@ -251,6 +275,28 @@ namespace CHU_SecurityAnalyzer.Core
                 Properties = properties,
                 RevitElementId = elem.Id.IntegerValue
             };
+        }
+
+        private double ExtractCableTrayLength(Element elem)
+        {
+            // Paramètre natif Revit pour la longueur d'un chemin de câbles
+            foreach (string pName in new[] { "Length", "Longueur" })
+            {
+                Parameter p = elem.LookupParameter(pName);
+                if (p != null && p.HasValue && p.StorageType == StorageType.Double)
+                {
+                    double v = p.AsDouble();
+                    if (v > 0) return Math.Round(v * FEET_TO_METERS, 3);
+                }
+            }
+            // BuiltInParameter CURVE_ELEM_LENGTH = longueur d'un élément courbe (CableTray)
+            Parameter builtIn = elem.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH);
+            if (builtIn != null && builtIn.HasValue)
+            {
+                double v = builtIn.AsDouble();
+                if (v > 0) return Math.Round(v * FEET_TO_METERS, 3);
+            }
+            return 0;
         }
 
         private EquipmentData ParseEquipmentFromLink(Element elem, Document linkDoc, Transform transform)
@@ -282,6 +328,23 @@ namespace CHU_SecurityAnalyzer.Core
 
             var properties = GetElementProperties(elem);
             double? weight = ExtractWeight(properties);
+
+            // Chemin de câbles dans lien : même logique que ParseEquipment
+            bool isCableTray = elem.Category != null &&
+                (BuiltInCategory)elem.Category.Id.IntegerValue == BuiltInCategory.OST_CableTray;
+            if (isCableTray)
+            {
+                double lengthM = ExtractCableTrayLength(elem);
+                if (lengthM > 0)
+                    maxDim = lengthM;
+
+                string serviceType = GetParamValue(elem, "Type de service")
+                                  ?? GetParamValue(elem, "Service Type")
+                                  ?? GetParamValue(elem, "System Type")
+                                  ?? "";
+                if (!string.IsNullOrEmpty(serviceType) && !properties.ContainsKey("Type de service"))
+                    properties["Type de service"] = serviceType;
+            }
 
             return new EquipmentData
             {
@@ -534,9 +597,12 @@ namespace CHU_SecurityAnalyzer.Core
             "Zone", "ZoneType", "Humidity", "Humidite", "WetZone",
             // Accessibilite
             "Access", "Acces", "Accessible",
-            // Gaine / support
+            // Gaine / support / chemin de câbles
             "Height", "Hauteur", "Length", "Longueur",
             "CableType", "TypeCable", "CF", "CFA",
+            "Type de service", "Service Type", "System Type",
+            "Taille", "Size", "Width", "Largeur",
+            "Niveau", "Level",
             // Identification
             "Description", "Comments", "Mark", "Repere",
             "System Classification", "Classification systeme"

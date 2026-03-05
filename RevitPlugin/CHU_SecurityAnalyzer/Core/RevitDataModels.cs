@@ -263,5 +263,12 @@ namespace CHU_SecurityAnalyzer.Core
 
         [DataMember(Name = "recommendation")]
         public string Recommendation { get; set; }
+
+        /// <summary>
+        /// Détails structurés de la violation (ex: needs_trappe_selection, equipment_list...).
+        /// Utilisé par GAINE-003 pour transmettre la liste d'équipements au formulaire Revit.
+        /// </summary>
+        [DataMember(Name = "details")]
+        public Dictionary<string, object> Details { get; set; } = new Dictionary<string, object>();
     }
 }

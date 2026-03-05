@@ -39,14 +39,20 @@
   },
 
   "GAINE-004": {
-    "name": "Surcharge supports de câbles",
+    "name": "Espacement supports chemins de câbles",
     "enabled": true,
     "severity": "HAUTE",
     "parameters": {
+      "max_span_m": 2.0,
       "safety_margin_percent": 15,
-      "default_cable_weight_kg_per_m": 2.5,
       "default_support_capacity_kg": 50,
-      "description": "Le poids des câbles ne doit pas dépasser la capacité portante des supports"
+      "courant_fort_weight_kg_per_m": 1.4,
+      "courant_faible_weight_kg_per_m": 0.6,
+      "default_weight_kg_per_m": 1.0,
+      "cable_tray_ifc_type": "IfcCableCarrierSegment",
+      "courant_fort_keywords": ["cfo", "cdc cfo", "courant fort"],
+      "courant_faible_keywords": ["cfa", "cdc cfa", "cdc incendie", "courant faible"],
+      "description": "Tout chemin de câbles > 2m doit avoir un support physique. Alerte si aucun support déclaré."
     }
   },
   "GAINE-005": {

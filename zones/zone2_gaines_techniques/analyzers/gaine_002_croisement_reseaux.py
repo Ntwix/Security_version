@@ -54,25 +54,101 @@ class GAINE002CroisementReseauxChecker:
 
     def analyze(self, spaces: List[Dict], equipment: List[Dict],
                 slabs: List[Dict], space_types: Dict) -> List[Dict]:
-        """Lance analyse GAINE-002"""
-        logger.analysis_start(self.RULE_ID)
+        """Lance analyse GAINE-002.
 
+        Stratégie : comparer tous les câbles CFO vs CFA par niveau (Z),
+        en utilisant la distance horizontale 2D (norme électrique = séparation latérale).
+        """
+        logger.analysis_start(self.RULE_ID)
         self.violations = []
 
-        # Espaces concernés (gaines + locaux techniques)
-        concerned_spaces = []
-        concerned_spaces.extend(space_types.get('gaine_technique', []))
-        concerned_spaces.extend(space_types.get('local_technique', []))
-        concerned_spaces.extend(space_types.get('faux_plafond', []))
+        # Extraire tous les chemins de câbles
+        cable_trays = [eq for eq in equipment
+                       if eq.get('ifc_type') == 'IfcCableCarrierSegment']
 
-        if not concerned_spaces:
-            logger.info(f"    Aucun espace concerné pour {self.RULE_ID}")
+        if not cable_trays:
+            logger.info(f"    Aucun chemin de câbles pour {self.RULE_ID}")
             return self.violations
 
-        logger.info(f"   Analyse {len(concerned_spaces)} espaces pour croisement réseaux...")
+        # Classifier CFO / CFA
+        cfo_cables = [c for c in cable_trays if self._classify_equipment(c) == 'courant_fort']
+        cfa_cables = [c for c in cable_trays if self._classify_equipment(c) == 'courant_faible']
 
-        for space in concerned_spaces:
-            self._analyze_space(space, equipment)
+        logger.info(f"   {len(cfo_cables)} câbles CFO, {len(cfa_cables)} câbles CFA")
+
+        if not cfo_cables or not cfa_cables:
+            logger.info(f"    Pas de paire CFO/CFA à comparer pour {self.RULE_ID}")
+            return self.violations
+
+        # Grouper par niveau (plages Z en mètres)
+        level_ranges = [
+            ('Sous-sol', -6.0, -0.5),
+            ('RDC',      -0.5,  3.5),
+            ('Niveau 1',  3.5,  7.0),
+            ('Niveau 2',  7.0, 10.5),
+            ('Niveau 3', 10.5, 14.0),
+            ('Niveau 4', 14.0, 25.0),
+        ]
+
+        seen_pairs = set()
+
+        for lvl_name, z_min, z_max in level_ranges:
+            lvl_cfo = [c for c in cfo_cables
+                       if z_min <= c.get('centroid', (0,0,0))[2] < z_max]
+            lvl_cfa = [c for c in cfa_cables
+                       if z_min <= c.get('centroid', (0,0,0))[2] < z_max]
+
+            if not lvl_cfo or not lvl_cfa:
+                continue
+
+            logger.info(f"   {lvl_name}: {len(lvl_cfo)} CFO, {len(lvl_cfa)} CFA")
+
+            for eq_cf in lvl_cfo:
+                for eq_cfa in lvl_cfa:
+                    pair_key = (eq_cf.get('revit_element_id', 0),
+                                eq_cfa.get('revit_element_id', 0))
+                    if pair_key in seen_pairs:
+                        continue
+
+                    cf_pt  = eq_cf.get('centroid', (0, 0, 0))
+                    cfa_pt = eq_cfa.get('centroid', (0, 0, 0))
+
+                    # Distance horizontale 2D (norme électrique)
+                    import math
+                    distance = math.sqrt(
+                        (cf_pt[0] - cfa_pt[0])**2 +
+                        (cf_pt[1] - cfa_pt[1])**2
+                    )
+
+                    if distance < self.min_distance:
+                        seen_pairs.add(pair_key)
+                        shortage = self.min_distance - distance
+                        violation = {
+                            "rule_id": self.RULE_ID,
+                            "severity": "CRITIQUE",
+                            "space_name": lvl_name,
+                            "space_global_id": "",
+                            "description": "Distance horizontale insuffisante entre courant fort et courant faible",
+                            "details": {
+                                "equipment_cf": eq_cf.get('name', ''),
+                                "equipment_cfa": eq_cfa.get('name', ''),
+                                "actual_distance_m": round(distance, 3),
+                                "required_distance_m": self.min_distance,
+                                "shortage_m": round(shortage, 3),
+                                "level": lvl_name,
+                            },
+                            "location": list(cf_pt),
+                            "recommendation": (
+                                f"Séparer les réseaux CF/CFA d'au moins {self.min_distance*100:.0f}cm "
+                                f"horizontalement. Manque: {shortage*100:.1f}cm — {lvl_name}"
+                            )
+                        }
+                        self.violations.append(violation)
+                        logger.rule_violation(
+                            self.RULE_ID, lvl_name,
+                            f"{eq_cf.get('name','')} <-> {eq_cfa.get('name','')}: "
+                            f"{distance*100:.1f}cm < {self.min_distance*100:.0f}cm"
+                        )
 
         logger.analysis_complete(self.RULE_ID, len(self.violations))
         return self.violations
