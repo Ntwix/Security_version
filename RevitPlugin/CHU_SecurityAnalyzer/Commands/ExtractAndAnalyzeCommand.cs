@@ -80,6 +80,10 @@ namespace CHU_SecurityAnalyzer.Commands
                 if (zone == "2")
                     results = HandleGaine003TrappesForm(results, doc, resultPath);
 
+                // === Etape 6c : GAINE-005 — Formulaire charge supports (Zone 2 uniquement) ===
+                if (zone == "2")
+                    results = HandleGaine005ChargeForm(results, resultPath);
+
                 // === Etape 7 : Dupliquer vues + appliquer coloration et symboles ===
                 var vizResult = ApplyVisualizationsToAllViews(doc, uiDoc, results, data);
 
@@ -170,6 +174,120 @@ namespace CHU_SecurityAnalyzer.Commands
             }
 
             return results;
+        }
+
+        // =====================================================================
+        //  GAINE-005 — FORMULAIRE CHARGE SUPPORTS
+        // =====================================================================
+
+        /// <summary>
+        /// Lit le cdc_summary du JSON Python, ouvre ChargeSupportsDialog,
+        /// puis remplace la violation marker par une violation par type de CDC dépassant la capacité.
+        /// </summary>
+        private AnalysisResults HandleGaine005ChargeForm(AnalysisResults results, string resultJsonPath)
+        {
+            if (results?.Violations == null) return results;
+
+            var marker = results.Violations.FirstOrDefault(v => v.RuleId == "GAINE-005");
+            if (marker == null) return results;
+
+            // Lire cdc_summary depuis le JSON brut
+            var cdcTypes       = new List<CHU_SecurityAnalyzer.UI.CdcTypeInfo>();
+            double capacity    = 90.0;
+            double marginPct   = 20.0;
+
+            try
+            {
+                string rawJson = File.ReadAllText(resultJsonPath, System.Text.Encoding.UTF8);
+                ParseGaine005Details(rawJson, out cdcTypes, out capacity, out marginPct);
+            }
+            catch { }
+
+            if (cdcTypes == null || cdcTypes.Count == 0)
+            {
+                results.Violations.Remove(marker);
+                return results;
+            }
+
+            // Ouvrir formulaire WPF
+            var dialog = new CHU_SecurityAnalyzer.UI.ChargeSupportsDialog(cdcTypes, capacity, marginPct);
+            bool? dialogResult = dialog.ShowDialog();
+
+            // Supprimer la violation marker générique
+            results.Violations.Remove(marker);
+
+            if (dialogResult != true || dialog.Results == null || dialog.Results.Count == 0)
+                return results;
+
+            // Créer une violation par type de CDC qui dépasse la capacité
+            foreach (var res in dialog.Results)
+            {
+                if (!res.IsViolation) continue;
+
+                double excess = res.TotalWeightKg - res.SafeCapacityKg;
+                results.Violations.Add(new ViolationData
+                {
+                    RuleId        = "GAINE-005",
+                    Severity      = "HAUTE",
+                    SpaceName     = $"CDC {res.ServiceType}",
+                    SpaceGlobalId = "",
+                    Description   = $"CDC {res.ServiceType} : charge totale {res.TotalWeightKg:F1} kg > capacité admissible {res.SafeCapacityKg:F0} kg",
+                    Location      = new double[] { 0, 0, 0 },
+                    Recommendation =
+                        $"Renforcer les supports ou réduire le nombre de câbles sur CDC {res.ServiceType}. " +
+                        $"Excès : {excess:F1} kg. Câbles déclarés : {res.Breakdown}"
+                });
+            }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Extrait le tableau cdc_summary et les paramètres de capacité
+        /// depuis le JSON brut du résultat Python GAINE-005.
+        /// </summary>
+        private void ParseGaine005Details(string rawJson,
+            out List<CHU_SecurityAnalyzer.UI.CdcTypeInfo> cdcTypes,
+            out double capacity, out double marginPct)
+        {
+            cdcTypes  = new List<CHU_SecurityAnalyzer.UI.CdcTypeInfo>();
+            capacity  = 90.0;
+            marginPct = 20.0;
+
+            try
+            {
+                // Extraire support_capacity_kg
+                ExtractJsonDouble(rawJson, "support_capacity_kg",    ref capacity);
+                ExtractJsonDouble(rawJson, "safety_margin_percent",  ref marginPct);
+
+                // Trouver le tableau cdc_summary
+                string marker = "\"cdc_summary\"";
+                int markerIdx = rawJson.IndexOf(marker);
+                if (markerIdx < 0) return;
+
+                int arrStart = rawJson.IndexOf('[', markerIdx + marker.Length);
+                if (arrStart < 0) return;
+
+                // Trouver fin du tableau
+                int depth = 0, arrEnd = -1;
+                for (int i = arrStart; i < rawJson.Length; i++)
+                {
+                    if (rawJson[i] == '[') depth++;
+                    else if (rawJson[i] == ']') { depth--; if (depth == 0) { arrEnd = i; break; } }
+                }
+                if (arrEnd < 0) return;
+
+                string arrJson = rawJson.Substring(arrStart, arrEnd - arrStart + 1);
+                using (var ms = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(arrJson)))
+                {
+                    var ser = new System.Runtime.Serialization.Json.DataContractJsonSerializer(
+                        typeof(List<CHU_SecurityAnalyzer.UI.CdcTypeInfo>));
+                    cdcTypes = (List<CHU_SecurityAnalyzer.UI.CdcTypeInfo>)ser.ReadObject(ms);
+                }
+            }
+            catch { }
+
+            if (cdcTypes == null) cdcTypes = new List<CHU_SecurityAnalyzer.UI.CdcTypeInfo>();
         }
 
         /// <summary>
@@ -326,6 +444,23 @@ namespace CHU_SecurityAnalyzer.Commands
                         }
                         txLoad.Commit();
                     }
+                }
+
+                // Zone 3 - Faux Plafonds : réutiliser symboles ELEC existants
+                // FPLAF-001 (HAUTE=critique) -> losange ELEC-004
+                // FPLAF-001 (MOYENNE=élevé)  -> triangle ELEC-003
+                // FPLAF-002 (surcharge)      -> croix ELEC-001
+                // FPLAF-003 (poussières)     -> cercle ELEC-002
+                var fplafMapping = new Dictionary<string, string>
+                {
+                    { "FPLAF-001", "ELEC-004" },
+                    { "FPLAF-002", "ELEC-001" },
+                    { "FPLAF-003", "ELEC-002" },
+                };
+                foreach (var kv in fplafMapping)
+                {
+                    if (ruleSymbols.ContainsKey(kv.Value))
+                        ruleSymbols[kv.Key] = ruleSymbols[kv.Value];
                 }
 
                 // === Transaction 2b : supprimer anciennes instances ===
@@ -834,7 +969,10 @@ namespace CHU_SecurityAnalyzer.Commands
                 { "GAINE-002", "Croisement CF/CFA" },
                 { "GAINE-003", "Trappes acces" },
                 { "GAINE-004", "Surcharge supports" },
-                { "GAINE-005", "Calcul charge supports" }
+                { "GAINE-005", "Calcul charge supports" },
+                { "FPLAF-001", "Chute de hauteur" },
+                { "FPLAF-002", "Surcharge plafond" },
+                { "FPLAF-003", "Poussieres" }
             };
 
             // Afficher chaque regle presente dans les resultats
@@ -868,6 +1006,12 @@ namespace CHU_SecurityAnalyzer.Commands
                     "  /\\  Triangle vert   = TRAPPE ACCES (GAINE-003)\n" +
                     "  +   Croix marron    = SURCHARGE SUPPORT (GAINE-004)\n" +
                     "  []  Carre violet    = CALCUL CHARGE (GAINE-005)\n";
+            if (zone == "3" || zone == "all")
+                summary +=
+                    "  <>  Losange rouge   = CHUTE HAUTEUR critique (FPLAF-001 HAUTE)\n" +
+                    "  /\\  Triangle orange = CHUTE HAUTEUR elevee (FPLAF-001 MOYENNE)\n" +
+                    "  +   Croix bleue     = SURCHARGE PLAFOND (FPLAF-002)\n" +
+                    "  O   Cercle bleu     = POUSSIERES (FPLAF-003)\n";
 
             summary += "\nLes vues originales ne sont PAS modifiees.\n" +
                 "Consultez les vues prefixees \"ZONES RISQUES -\" dans le navigateur.\n\n" +
@@ -884,8 +1028,8 @@ namespace CHU_SecurityAnalyzer.Commands
         {
             using (var form = new System.Windows.Forms.Form())
             {
-                form.Text = "CHU Security Analyzer - Selection Zone";
-                form.Size = new System.Drawing.Size(400, 320);
+                form.Text = "BIM Conformite - Analyse";
+                form.Size = new System.Drawing.Size(420, 320);
                 form.StartPosition = FormStartPosition.CenterScreen;
                 form.FormBorderStyle = FormBorderStyle.FixedDialog;
                 form.MaximizeBox = false;
@@ -893,19 +1037,19 @@ namespace CHU_SecurityAnalyzer.Commands
 
                 var label = new Label
                 {
-                    Text = "Selectionnez la zone d'analyse :",
+                    Text = "Selectionnez la categorie a analyser :",
                     Location = new System.Drawing.Point(20, 20),
-                    Size = new System.Drawing.Size(350, 25),
+                    Size = new System.Drawing.Size(370, 25),
                     Font = new System.Drawing.Font("Segoe UI", 10, System.Drawing.FontStyle.Bold)
                 };
 
                 var radioButtons = new RadioButton[]
                 {
-                    new RadioButton { Text = "Zone 1 - Locaux Electriques (ELEC-001 a 004)", Location = new System.Drawing.Point(30, 55), Size = new System.Drawing.Size(330, 25), Checked = true },
-                    new RadioButton { Text = "Zone 2 - Gaines Techniques (GAINE-001 a 005)", Location = new System.Drawing.Point(30, 85), Size = new System.Drawing.Size(330, 25) },
-                    new RadioButton { Text = "Zone 3 - Faux Plafonds Tech. (FPLAF-001 a 003)", Location = new System.Drawing.Point(30, 115), Size = new System.Drawing.Size(330, 25) },
-                    new RadioButton { Text = "Zone 4 - Planchers Techniques (PLAN-001 a 005)", Location = new System.Drawing.Point(30, 145), Size = new System.Drawing.Size(330, 25) },
-                    new RadioButton { Text = "Toutes les zones", Location = new System.Drawing.Point(30, 175), Size = new System.Drawing.Size(330, 25) }
+                    new RadioButton { Text = "Locaux Electriques (ELEC-001 a 004)", Location = new System.Drawing.Point(30, 55), Size = new System.Drawing.Size(350, 25), Checked = true },
+                    new RadioButton { Text = "Gaines Techniques (GAINE-001 a 005)", Location = new System.Drawing.Point(30, 85), Size = new System.Drawing.Size(350, 25) },
+                    new RadioButton { Text = "Faux Plafonds Techniques (FPLAF-001 a 003)", Location = new System.Drawing.Point(30, 115), Size = new System.Drawing.Size(350, 25) },
+                    new RadioButton { Text = "Planchers Techniques (PLAN-001 a 005)", Location = new System.Drawing.Point(30, 145), Size = new System.Drawing.Size(350, 25) },
+                    new RadioButton { Text = "Toutes les categories", Location = new System.Drawing.Point(30, 175), Size = new System.Drawing.Size(350, 25) }
                 };
 
                 var btnOk = new Button

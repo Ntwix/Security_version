@@ -31,6 +31,9 @@ RevitPlugin/CHU_SecurityAnalyzer/obj/
 .idea/
 .vscode/
 
+# Claude Code
+.claude/
+
 # OS
 Thumbs.db
 .DS_Store

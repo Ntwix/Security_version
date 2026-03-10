@@ -6,11 +6,12 @@ MAIN - Système Multi-Zones d'Analyse de Conformité Sécurité
 Point d'entrée principal du système d'analyse automatique des maquettes 3D
 pour la détection des non-conformités de sécurité.
 
-Zones supportées:
-  Zone 1 - Locaux Électriques (ELEC-001 à ELEC-004)
-  Zone 2 - Gaines Techniques (GAINE-001 à GAINE-005)
-  Zone 3 - Faux Plafonds Techniques (FPLAF-001 à FPLAF-003)
-  Zone 4 - Planchers Techniques (PLAN-001 à PLAN-005) [Formulaire interactif]
+Catégories supportées:
+  Catégorie 1 - Locaux Électriques (ELEC-001 à ELEC-004)
+  Catégorie 2 - Gaines Techniques (GAINE-001 à GAINE-005)
+  Catégorie 3 - Faux Plafonds Techniques (FPLAF-001 à FPLAF-003)
+  Catégorie 4 - Planchers Techniques (PLAN-001 à PLAN-005) [Formulaire interactif]
+  Catégorie 5 - Risques Chantier (CHANT-001 à CHANT-005)
 
 Usage:
     python main.py --zone 1 --ifc-archi maquettes/Ibn_Sina_ARCHI.ifc --ifc-elec maquettes/Ibn_Sina_ELEC.ifc
@@ -66,16 +67,16 @@ def _load_extracted_json(json_path: str) -> dict:
 
 
 def run_zone1(extracted_data, output_dir, rules, format_choice):
-    """Exécute l'analyse Zone 1 - Locaux Électriques"""
-    from zones.zone1_locaux_electriques.space_identifier import SpaceIdentifier
-    from zones.zone1_locaux_electriques.analyzers import (
+    """Exécute l'analyse Catégorie 1 - Locaux Électriques"""
+    from categories.categorie1_locaux_electriques.space_identifier import SpaceIdentifier
+    from categories.categorie1_locaux_electriques.analyzers import (
         ELEC001WeightChecker,
         ELEC002VentilationChecker,
         ELEC003DoorWidthChecker,
         ELEC004ShowerZoneChecker
     )
 
-    logger.section_header("ZONE 1 - LOCAUX ÉLECTRIQUES")
+    logger.section_header("CATÉGORIE 1 - LOCAUX ÉLECTRIQUES")
 
     # Classification des espaces
     logger.section_header("CLASSIFICATION DES ESPACES PAR CATEGORIE")
@@ -99,7 +100,7 @@ def run_zone1(extracted_data, output_dir, rules, format_choice):
         rules_to_analyze = ['ELEC-001', 'ELEC-002', 'ELEC-003', 'ELEC-004']
 
     if not rules_to_analyze:
-        logger.info("   Aucune règle ELEC à analyser pour Zone 1")
+        logger.info("   Aucune règle ELEC à analyser pour Catégorie 1")
         return {}
 
     logger.info(f" Règles à analyser: {', '.join(rules_to_analyze)}")
@@ -134,7 +135,7 @@ def run_zone1(extracted_data, output_dir, rules, format_choice):
 
     # Génération rapports
     logger.section_header("GÉNÉRATION RAPPORTS - ZONE 1")
-    ifc_name = "Zone 1 - Locaux Électriques"
+    ifc_name = "Catégorie 1 - Locaux Électriques"
     generator = AnnotationGenerator()
     generator.compile_results(violations_by_rule, ifc_name, extracted_data['summary'])
 
@@ -153,9 +154,9 @@ def run_zone1(extracted_data, output_dir, rules, format_choice):
 
 
 def run_zone2(extracted_data, output_dir, rules, format_choice):
-    """Exécute l'analyse Zone 2 - Gaines Techniques"""
-    from zones.zone2_gaines_techniques.gaine_identifier import GaineIdentifier
-    from zones.zone2_gaines_techniques.analyzers import (
+    """Exécute l'analyse Catégorie 2 - Gaines Techniques"""
+    from categories.categorie2_gaines_techniques.gaine_identifier import GaineIdentifier
+    from categories.categorie2_gaines_techniques.analyzers import (
         GAINE001ChuteObjetsChecker,
         GAINE002CroisementReseauxChecker,
         GAINE003TrappesAccesChecker,
@@ -163,7 +164,7 @@ def run_zone2(extracted_data, output_dir, rules, format_choice):
         GAINE005CalculChargeSupportsChecker
     )
 
-    logger.section_header("ZONE 2 - GAINES TECHNIQUES")
+    logger.section_header("CATÉGORIE 2 - GAINES TECHNIQUES")
 
     # Identification des gaines techniques
     logger.section_header("IDENTIFICATION DES GAINES TECHNIQUES")
@@ -187,7 +188,7 @@ def run_zone2(extracted_data, output_dir, rules, format_choice):
         rules_to_analyze = ['GAINE-001', 'GAINE-002', 'GAINE-003', 'GAINE-004', 'GAINE-005']
 
     if not rules_to_analyze:
-        logger.info("   Aucune règle GAINE à analyser pour Zone 2")
+        logger.info("   Aucune règle GAINE à analyser pour Catégorie 2")
         return {}
 
     logger.info(f" Règles à analyser: {', '.join(rules_to_analyze)}")
@@ -230,7 +231,7 @@ def run_zone2(extracted_data, output_dir, rules, format_choice):
 
     # Génération rapports
     logger.section_header("GÉNÉRATION RAPPORTS - ZONE 2")
-    ifc_name = "Zone 2 - Gaines Techniques"
+    ifc_name = "Catégorie 2 - Gaines Techniques"
     generator = AnnotationGenerator()
     generator.compile_results(violations_by_rule, ifc_name, extracted_data['summary'])
 
@@ -246,15 +247,15 @@ def run_zone2(extracted_data, output_dir, rules, format_choice):
 
 
 def run_zone3(extracted_data, output_dir, rules, format_choice):
-    """Exécute l'analyse Zone 3 - Faux Plafonds Techniques"""
-    from zones.zone3_faux_plafonds_techniques.fplaf_identifier import FPlafIdentifier
-    from zones.zone3_faux_plafonds_techniques.analyzers import (
+    """Exécute l'analyse Catégorie 3 - Faux Plafonds Techniques"""
+    from categories.categorie3_faux_plafonds_techniques.fplaf_identifier import FPlafIdentifier
+    from categories.categorie3_faux_plafonds_techniques.analyzers import (
         FPLAF001ChuteHauteurChecker,
         FPLAF002SurchargePlafondChecker,
         FPLAF003PoussieresChecker
     )
 
-    logger.section_header("ZONE 3 - FAUX PLAFONDS TECHNIQUES")
+    logger.section_header("CATÉGORIE 3 - FAUX PLAFONDS TECHNIQUES")
 
     # Identification des espaces faux-plafonds
     logger.section_header("IDENTIFICATION DES FAUX-PLAFONDS")
@@ -278,7 +279,7 @@ def run_zone3(extracted_data, output_dir, rules, format_choice):
         rules_to_analyze = ['FPLAF-001', 'FPLAF-002', 'FPLAF-003']
 
     if not rules_to_analyze:
-        logger.info("   Aucune règle FPLAF à analyser pour Zone 3")
+        logger.info("   Aucune règle FPLAF à analyser pour Catégorie 3")
         return {}
 
     logger.info(f" Règles à analyser: {', '.join(rules_to_analyze)}")
@@ -306,7 +307,7 @@ def run_zone3(extracted_data, output_dir, rules, format_choice):
 
     # Génération rapports
     logger.section_header("GÉNÉRATION RAPPORTS - ZONE 3")
-    ifc_name = "Zone 3 - Faux Plafonds Techniques"
+    ifc_name = "Catégorie 3 - Faux Plafonds Techniques"
     generator = AnnotationGenerator()
     generator.compile_results(violations_by_rule, ifc_name, extracted_data['summary'])
 
@@ -321,12 +322,93 @@ def run_zone3(extracted_data, output_dir, rules, format_choice):
     return violations_by_rule
 
 
-def run_zone4(extracted_data, output_dir, rules, format_choice):
-    """Exécute l'analyse Zone 4 - Planchers Techniques (Formulaire interactif)"""
-    from zones.zone4_planchers_techniques.plancher_identifier import PlancherIdentifier
-    from zones.zone4_planchers_techniques.analyzers import PLAN001005FormulaireChecker
+def run_zone5(extracted_data, output_dir, rules, format_choice):
+    """Exécute l'analyse Catégorie 5 - Risques Chantier"""
+    from categories.categorie5_risques_chantier.chantier_identifier import ChantierIdentifier
+    from categories.categorie5_risques_chantier.analyzers import (
+        CHANT001ManutentionChecker,
+        CHANT002AccessibiliteChecker,
+        CHANT003TravailHauteurChecker,
+        CHANT004GaineAscenseurChecker,
+        CHANT005VentilationChecker
+    )
 
-    logger.section_header("ZONE 4 - PLANCHERS TECHNIQUES")
+    logger.section_header("CATÉGORIE 5 - RISQUES CHANTIER")
+
+    identifier = ChantierIdentifier()
+    space_types = identifier.classify_all_spaces(extracted_data['spaces'])
+
+    logger.info(f"   Espaces par règle de conformité:")
+    for rule in ['CHANT-001', 'CHANT-002', 'CHANT-003', 'CHANT-004', 'CHANT-005']:
+        concerned = identifier.get_spaces_for_rule(space_types, rule)
+        logger.info(f"     {rule}: {len(concerned)} espaces concernés")
+
+    violations_by_rule = {}
+
+    if rules:
+        rules_to_analyze = [r for r in rules if r.startswith('CHANT')]
+    else:
+        rules_to_analyze = ['CHANT-001', 'CHANT-002', 'CHANT-003', 'CHANT-004', 'CHANT-005']
+
+    if not rules_to_analyze:
+        logger.info("   Aucune règle CHANT à analyser pour Catégorie 5")
+        return {}
+
+    if 'CHANT-001' in rules_to_analyze:
+        checker = CHANT001ManutentionChecker()
+        violations_by_rule['CHANT-001'] = checker.analyze(
+            extracted_data['spaces'], extracted_data['equipment'],
+            extracted_data['slabs'], space_types,
+            doors=extracted_data.get('doors', [])
+        )
+    if 'CHANT-002' in rules_to_analyze:
+        checker = CHANT002AccessibiliteChecker()
+        violations_by_rule['CHANT-002'] = checker.analyze(
+            extracted_data['spaces'], extracted_data['equipment'],
+            extracted_data['slabs'], space_types
+        )
+    if 'CHANT-003' in rules_to_analyze:
+        checker = CHANT003TravailHauteurChecker()
+        violations_by_rule['CHANT-003'] = checker.analyze(
+            extracted_data['spaces'], extracted_data['equipment'],
+            extracted_data['slabs'], space_types
+        )
+    if 'CHANT-004' in rules_to_analyze:
+        checker = CHANT004GaineAscenseurChecker()
+        violations_by_rule['CHANT-004'] = checker.analyze(
+            extracted_data['spaces'], extracted_data['equipment'],
+            extracted_data['slabs'], space_types
+        )
+    if 'CHANT-005' in rules_to_analyze:
+        checker = CHANT005VentilationChecker()
+        violations_by_rule['CHANT-005'] = checker.analyze(
+            extracted_data['spaces'], extracted_data['equipment'],
+            extracted_data['slabs'], space_types
+        )
+
+    logger.section_header("GÉNÉRATION RAPPORTS - CATÉGORIE 5")
+    generator = AnnotationGenerator()
+    generator.compile_results(violations_by_rule, "Catégorie 5 - Risques Chantier", extracted_data['summary'])
+
+    output_path = Path(output_dir)
+    if format_choice in ['json', 'both']:
+        generator.save_json(str(output_path / 'analysis_results.json'))
+    if format_choice in ['excel', 'both']:
+        try:
+            generator.save_excel(str(output_path / 'analysis_results.xlsx'))
+        except PermissionError:
+            logger.warning("  Impossible d'ecrire le fichier Excel. JSON sauvegarde.")
+
+    generator.print_summary()
+    return violations_by_rule
+
+
+def run_zone4(extracted_data, output_dir, rules, format_choice):
+    """Exécute l'analyse Catégorie 4 - Planchers Techniques (Formulaire interactif)"""
+    from categories.categorie4_planchers_techniques.plancher_identifier import PlancherIdentifier
+    from categories.categorie4_planchers_techniques.analyzers import PLAN001005FormulaireChecker
+
+    logger.section_header("CATÉGORIE 4 - PLANCHERS TECHNIQUES")
 
     # Identification des espaces planchers techniques
     logger.section_header("IDENTIFICATION DES PLANCHERS TECHNIQUES")
@@ -364,7 +446,7 @@ def run_zone4(extracted_data, output_dir, rules, format_choice):
 
     # Génération rapports
     logger.section_header("GÉNÉRATION RAPPORTS - ZONE 4")
-    ifc_name = "Zone 4 - Planchers Techniques"
+    ifc_name = "Catégorie 4 - Planchers Techniques"
     generator = AnnotationGenerator()
     generator.compile_results(violations_by_rule, ifc_name, extracted_data['summary'])
 
@@ -380,8 +462,8 @@ def run_zone4(extracted_data, output_dir, rules, format_choice):
 
 
 @click.command()
-@click.option('--zone', type=click.Choice(['1', '2', '3', '4', 'all']), default='1',
-              help='Zone à analyser (1=Locaux Élec, 2=Gaines Tech, 3=Faux Plafonds, 4=Planchers Tech, all=toutes)')
+@click.option('--zone', type=click.Choice(['1', '2', '3', '4', '5', 'all']), default='1',
+              help='Catégorie à analyser (1=Locaux Élec, 2=Gaines Tech, 3=Faux Plafonds, 4=Planchers Tech, 5=Risques Chantier, all=toutes)')
 @click.option('--ifc', type=click.Path(exists=True),
               help='Chemin vers fichier IFC unique (si pas de séparation archi/elec)')
 @click.option('--ifc-archi', type=click.Path(exists=True),
@@ -391,7 +473,7 @@ def run_zone4(extracted_data, output_dir, rules, format_choice):
 @click.option('--input', 'input_json', type=click.Path(exists=True),
               help='JSON pré-extrait (mode Revit Plugin, remplace --ifc)')
 @click.option('--output', default=None,
-              help='Dossier de sortie (défaut: resultats/zoneN/)')
+              help='Dossier de sortie (défaut: resultats/categorieN/)')
 @click.option('--rules', multiple=True,
               help='Règles spécifiques à analyser (ex: ELEC-001 GAINE-002)')
 @click.option('--format', 'format_choice', type=click.Choice(['json', 'excel', 'both']), default='both',
@@ -425,7 +507,7 @@ def main(zone, ifc, ifc_archi, ifc_elec, input_json, output, rules, format_choic
         zones_to_run = []
 
         if zone == 'all':
-            zones_to_run = [1, 2, 3, 4]
+            zones_to_run = [1, 2, 3, 4, 5]
         else:
             zones_to_run = [int(zone)]
 
@@ -463,7 +545,7 @@ def main(zone, ifc, ifc_archi, ifc_elec, input_json, output, rules, format_choic
             if output:
                 output_dir = output
             else:
-                output_dir = f"resultats/zone{zone_num}"
+                output_dir = f"resultats/categorie{zone_num}"
 
             if zone_num == 1:
                 run_zone1(extracted_data, output_dir, list(rules), format_choice)
@@ -473,6 +555,8 @@ def main(zone, ifc, ifc_archi, ifc_elec, input_json, output, rules, format_choic
                 run_zone3(extracted_data, output_dir, list(rules), format_choice)
             elif zone_num == 4:
                 run_zone4(extracted_data, output_dir, list(rules), format_choice)
+            elif zone_num == 5:
+                run_zone5(extracted_data, output_dir, list(rules), format_choice)
 
         logger.info("  ANALYSE TERMINÉE AVEC SUCCÈS")
 
@@ -493,10 +577,11 @@ def print_banner():
     |  Projet: CHU IBN SINA                                          |
     |  Version: 3.0 (multi-zones)                                    |
     |                                                                |
-    |  Zone 1: Locaux Électriques    (ELEC-001 à ELEC-004)           |
-    |  Zone 2: Gaines Techniques    (GAINE-001 à GAINE-005)         |
-    |  Zone 3: Faux Plafonds Tech.  (FPLAF-001 à FPLAF-003)         |
-    |  Zone 4: Planchers Techniques (PLAN-001 à PLAN-005)           |
+    |  Catégorie 1: Locaux Électriques    (ELEC-001 à ELEC-004)     |
+    |  Catégorie 2: Gaines Techniques    (GAINE-001 à GAINE-005)    |
+    |  Catégorie 3: Faux Plafonds Tech.  (FPLAF-001 à FPLAF-003)   |
+    |  Catégorie 4: Planchers Techniques (PLAN-001 à PLAN-005)      |
+    |  Catégorie 5: Risques Chantier     (CHANT-001 à CHANT-005)    |
     |                                                                |
     ==================================================================
     """

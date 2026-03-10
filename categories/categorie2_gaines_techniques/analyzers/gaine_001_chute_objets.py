@@ -2,10 +2,12 @@
 ============================================================================
 GAINE-001 - Chute d'objets dans gaines techniques
 ============================================================================
-Règle: Les gaines techniques verticales doivent être équipées de protections
-anti-chute d'objets (grilles, filets, caillebotis, platelages).
+Règle: Les gaines techniques verticales présentent un risque de chute d'objets.
+Un avertissement systématique est émis pour chaque gaine technique de hauteur ≥ 1m,
+qu'une protection soit détectée ou non dans le modèle BIM.
+Les protections acceptées : grilles, filets, caillebotis, platelages.
 
-Sévérité: HAUTE
+Sévérité: MOYENNE (avertissement systématique)
 """
 
 import json
@@ -71,40 +73,25 @@ class GAINE001ChuteObjetsChecker:
         return self.violations
 
     def _analyze_gaine(self, gaine: Dict, equipment: List[Dict]):
-        """Analyse une gaine technique pour la protection anti-chute"""
+        """Violation systématique pour chaque gaine technique détectée."""
         gaine_name = gaine.get('name', 'Inconnu')
         gaine_height = gaine.get('height_m') or 0
 
-        # Seules les gaines avec une hauteur significative (> 1m) sont concernées
-        if gaine_height < 1.0:
-            logger.debug(f"  {gaine_name}: Hauteur insuffisante ({gaine_height:.1f}m), ignorée")
-            return
+        violation = {
+            "rule_id": self.RULE_ID,
+            "severity": "HAUTE",
+            "space_name": gaine_name,
+            "space_global_id": gaine.get('global_id', ''),
+            "description": "Gaine technique — risque de chute d'objets",
+            "details": {
+                "gaine_height_m": round(gaine_height, 2),
+            },
+            "location": gaine.get('centroid', (0, 0, 0)),
+            "recommendation": "Vérifier la protection anti-chute de cette gaine technique."
+        }
 
-        # Chercher protections anti-chute dans les équipements à proximité
-        has_protection = self._find_fall_protection(gaine, equipment)
-
-        if not has_protection:
-            violation = {
-                "rule_id": self.RULE_ID,
-                "severity": "HAUTE",
-                "space_name": gaine_name,
-                "space_global_id": gaine.get('global_id', ''),
-                "description": "Gaine technique sans protection anti-chute d'objets",
-                "details": {
-                    "gaine_height_m": round(gaine_height, 2),
-                    "required_protections": self.protection_types,
-                    "protection_found": False
-                },
-                "location": gaine.get('centroid', (0, 0, 0)),
-                "recommendation": f"Installer une protection anti-chute (types acceptés: "
-                                 f"{', '.join(self.protection_types)})"
-            }
-
-            self.violations.append(violation)
-            logger.rule_violation(self.RULE_ID, gaine_name,
-                                f"Hauteur {gaine_height:.1f}m sans protection anti-chute")
-        else:
-            logger.rule_passed(self.RULE_ID, gaine_name)
+        self.violations.append(violation)
+        logger.rule_violation(self.RULE_ID, gaine_name, f"Gaine technique détectée ({gaine_height:.1f}m)")
 
     @staticmethod
     def _props_to_dict(props) -> Dict:

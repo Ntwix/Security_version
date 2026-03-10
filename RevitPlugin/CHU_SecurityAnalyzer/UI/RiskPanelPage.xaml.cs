@@ -58,8 +58,8 @@ namespace CHU_SecurityAnalyzer.UI
 
         private static readonly Dictionary<string, string> ZoneLabels = new Dictionary<string, string>
         {
-            { "ELEC",  "Zone 1 — Locaux Électriques" },
-            { "GAINE", "Zone 2 — Gaines Techniques"  },
+            { "ELEC",  "Locaux Électriques" },
+            { "GAINE", "Gaines Techniques"  },
         };
 
         private static readonly Dictionary<string, Color> ZoneColors = new Dictionary<string, Color>
@@ -129,7 +129,7 @@ namespace CHU_SecurityAnalyzer.UI
             titleRow.Children.Add(dot);
             titleRow.Children.Add(new TextBlock
             {
-                Text       = "CHU — Zones à Risque",
+                Text       = "Rapport de Conformité BIM",
                 FontSize   = 14, FontWeight = FontWeights.Bold,
                 Foreground = BR_HDR_TXT,
                 VerticalAlignment = VerticalAlignment.Center
@@ -164,7 +164,7 @@ namespace CHU_SecurityAnalyzer.UI
             var fzStack = new StackPanel();
             fzStack.Children.Add(new TextBlock
             {
-                Text       = "FILTRER PAR ZONE",
+                Text       = "CATÉGORIE DE CONFORMITÉ",
                 FontSize   = 9, FontWeight = FontWeights.Bold,
                 Foreground = BR_MUTED,
                 Margin     = new Thickness(0, 0, 0, 5)
@@ -250,7 +250,7 @@ namespace CHU_SecurityAnalyzer.UI
             _filterRuleBar.Visibility = Visibility.Collapsed;
 
             int total = results?.Violations?.Count ?? 0;
-            _txtStats.Text = $"Zone {zone}   —   {total} violations";
+            _txtStats.Text = $"Catégorie {zone}   —   {total} non-conformités";
 
             // Barres stats par règle
             _statBars.Children.Clear();
