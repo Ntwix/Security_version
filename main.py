@@ -391,13 +391,23 @@ def run_zone5(extracted_data, output_dir, rules, format_choice):
     generator.compile_results(violations_by_rule, "Catégorie 5 - Risques Chantier", extracted_data['summary'])
 
     output_path = Path(output_dir)
+    json_path = str(output_path / 'analysis_results.json')
     if format_choice in ['json', 'both']:
-        generator.save_json(str(output_path / 'analysis_results.json'))
+        generator.save_json(json_path)
     if format_choice in ['excel', 'both']:
         try:
             generator.save_excel(str(output_path / 'analysis_results.xlsx'))
         except PermissionError:
             logger.warning("  Impossible d'ecrire le fichier Excel. JSON sauvegarde.")
+
+    # Génération PDF Plan d'Identification et d'Évaluation des Risques
+    try:
+        from categories.categorie5_risques_chantier.pdf_generator import generate_pdf
+        pdf_path = str(output_path / 'plan_identification_risques.pdf')
+        generate_pdf(json_path, pdf_path)
+        logger.info(f"   PDF généré : {pdf_path}")
+    except Exception as e:
+        logger.warning(f"  PDF non généré : {e}")
 
     generator.print_summary()
     return violations_by_rule

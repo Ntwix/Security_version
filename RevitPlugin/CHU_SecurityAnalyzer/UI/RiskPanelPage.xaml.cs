@@ -1,12 +1,16 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using CHU_SecurityAnalyzer.Core;
+using RevitDB  = Autodesk.Revit.DB;
+using RevitUI  = Autodesk.Revit.UI;
 
 namespace CHU_SecurityAnalyzer.UI
 {
@@ -25,47 +29,54 @@ namespace CHU_SecurityAnalyzer.UI
         // Couleurs par règle
         private static readonly Dictionary<string, Color> RuleColors = new Dictionary<string, Color>
         {
-            { "ELEC-001", Color.FromRgb( 50, 120, 220) },
-            { "ELEC-002", Color.FromRgb(100, 160, 255) },
-            { "ELEC-003", Color.FromRgb(255, 140,  40) },
-            { "ELEC-004", Color.FromRgb(220,  60,  60) },
+            { "ELEC-001",  Color.FromRgb( 50, 120, 220) },
+            { "ELEC-002",  Color.FromRgb(100, 160, 255) },
+            { "ELEC-003",  Color.FromRgb(255, 140,  40) },
+            { "ELEC-004",  Color.FromRgb(220,  60,  60) },
             { "GAINE-001", Color.FromRgb(180,   0,   0) },
             { "GAINE-002", Color.FromRgb(200,   0, 200) },
             { "GAINE-003", Color.FromRgb(  0, 140,   0) },
             { "GAINE-004", Color.FromRgb(160,  90,   0) },
             { "GAINE-005", Color.FromRgb( 90,   0, 160) },
+            { "CHANT-001", Color.FromRgb(230, 130,   0) },
+            { "CHANT-002", Color.FromRgb(200,  30,  30) },
+            { "CHANT-003", Color.FromRgb(220, 160,   0) },
+            { "CHANT-004", Color.FromRgb(160,   0,   0) },
+            { "CHANT-005", Color.FromRgb( 40, 160, 180) },
         };
 
         private static readonly Dictionary<string, string> RuleLabels = new Dictionary<string, string>
         {
-            { "ELEC-001", "Sécurité générale" },
-            { "ELEC-002", "Ventilation"        },
-            { "ELEC-003", "Porte"              },
-            { "ELEC-004", "Zone IP65"          },
-            { "GAINE-001", "Chute objets"      },
-            { "GAINE-002", "Croisement CF/CFA" },
-            { "GAINE-003", "Trappes accès"     },
-            { "GAINE-004", "Surcharge support" },
-            { "GAINE-005", "Calcul charge"     },
+            { "ELEC-001",  "Sécurité générale"  },
+            { "ELEC-002",  "Ventilation"         },
+            { "ELEC-003",  "Porte"               },
+            { "ELEC-004",  "Zone IP65"           },
+            { "GAINE-001", "Chute objets"        },
+            { "GAINE-002", "Croisement CF/CFA"   },
+            { "GAINE-003", "Trappes accès"       },
+            { "GAINE-004", "Surcharge support"   },
+            { "GAINE-005", "Calcul charge"       },
+            { "CHANT-001", "Manutention"         },
+            { "CHANT-002", "Accès électrique"    },
+            { "CHANT-003", "Travail en hauteur"  },
+            { "CHANT-004", "Gaine ascenseur"     },
+            { "CHANT-005", "Ventilation local"   },
         };
 
         // Zones et leurs règles
         private static readonly Dictionary<string, string[]> ZoneRules = new Dictionary<string, string[]>
         {
-            { "ELEC",  new[] { "ELEC-001", "ELEC-002", "ELEC-003", "ELEC-004" } },
-            { "GAINE", new[] { "GAINE-001", "GAINE-002", "GAINE-003", "GAINE-004", "GAINE-005" } },
+            { "CHANT", new[] { "CHANT-001", "CHANT-002", "CHANT-003", "CHANT-004", "CHANT-005" } },
         };
 
         private static readonly Dictionary<string, string> ZoneLabels = new Dictionary<string, string>
         {
-            { "ELEC",  "Locaux Électriques" },
-            { "GAINE", "Gaines Techniques"  },
+            { "CHANT", "Risques Chantier" },
         };
 
         private static readonly Dictionary<string, Color> ZoneColors = new Dictionary<string, Color>
         {
-            { "ELEC",  Color.FromRgb(  0,  84, 166) },
-            { "GAINE", Color.FromRgb(160,  60,   0) },
+            { "CHANT", Color.FromRgb(180,  40,  40) },
         };
 
         private static readonly List<(string Name, double ZMin, double ZMax)> LevelRanges =
@@ -81,8 +92,9 @@ namespace CHU_SecurityAnalyzer.UI
 
         // ── État ──────────────────────────────────────────────────────────────
         private AnalysisResults _results;
-        private string _activeZone   = null; // "ELEC" | "GAINE" | null = tout
+        private string _activeZone   = null; // "ELEC" | "GAINE" | "CHANT" | null = tout
         private string _activeRule   = null; // "ELEC-002" etc. | null = zone entière
+        public RevitUI.UIApplication UiApp = null; // pour navigation vers élément
 
         // ── Contrôles ─────────────────────────────────────────────────────────
         private TextBlock   _txtStats;
@@ -148,6 +160,24 @@ namespace CHU_SecurityAnalyzer.UI
             _statBars = new StackPanel { Margin = new Thickness(17, 0, 0, 0) };
             hStack.Children.Add(_statBars);
 
+            // Bouton Export CHANT-003 CSV
+            var btnExport = new Button
+            {
+                Content         = "Exporter CHANT-003 → Excel (CSV)",
+                Margin          = new Thickness(17, 6, 0, 2),
+                Padding         = new Thickness(10, 4, 10, 4),
+                FontSize        = 10,
+                FontWeight      = FontWeights.SemiBold,
+                Foreground      = new SolidColorBrush(Color.FromRgb(220, 160, 0)),
+                Background      = new SolidColorBrush(Color.FromArgb(40, 220, 160, 0)),
+                BorderBrush     = new SolidColorBrush(Color.FromRgb(220, 160, 0)),
+                BorderThickness = new Thickness(1),
+                Cursor          = System.Windows.Input.Cursors.Hand,
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            btnExport.Click += (s, e) => ExportChant003ToCsv();
+            hStack.Children.Add(btnExport);
+
             header.Child = hStack;
             root.Children.Add(header);
 
@@ -212,7 +242,13 @@ namespace CHU_SecurityAnalyzer.UI
                 Margin     = new Thickness(0, 0, 0, 4)
             });
             _filterRuleRow = new StackPanel { Orientation = Orientation.Horizontal };
-            frStack.Children.Add(_filterRuleRow);
+            var ruleScroll = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility   = ScrollBarVisibility.Disabled,
+                Content = _filterRuleRow
+            };
+            frStack.Children.Add(ruleScroll);
             _filterRuleBar.Child = frStack;
             root.Children.Add(_filterRuleBar);
 
@@ -489,10 +525,26 @@ namespace CHU_SecurityAnalyzer.UI
             var spaceItem = new TreeViewItem
             {
                 Header = panel, IsExpanded = false,
-                Padding = new Thickness(4, 2, 4, 2), Background = BR_BG
+                Padding = new Thickness(4, 2, 4, 2), Background = BR_BG,
+                ToolTip = "Double-cliquer pour naviguer vers ce local dans Revit"
             };
             spaceItem.MouseEnter += (s, e) => ((TreeViewItem)s).Background = BR_BG2;
             spaceItem.MouseLeave += (s, e) => ((TreeViewItem)s).Background = BR_BG;
+
+            // Double-clic sur le nom du local → navigation Revit
+            var firstViolOfSpace = viols.FirstOrDefault();
+            if (firstViolOfSpace != null)
+            {
+                string capturedGuid = firstViolOfSpace.SpaceGlobalId;
+                double[] capturedLoc = firstViolOfSpace.Location;
+                spaceItem.MouseDoubleClick += (s, e) =>
+                {
+                    e.Handled = true;
+                    bool navigated = !string.IsNullOrEmpty(capturedGuid) && NavigateToElementByGuid(capturedGuid);
+                    if (!navigated && capturedLoc != null && capturedLoc.Length >= 2)
+                        NavigateToLocation(capturedLoc);
+                };
+            }
 
             foreach (var rule in rules)
             {
@@ -539,16 +591,188 @@ namespace CHU_SecurityAnalyzer.UI
                     }
                 });
 
+                var firstViol = viols.FirstOrDefault(v => v.RuleId == rule);
+
                 var subItem = new TreeViewItem
                 {
-                    Header = row, Padding = new Thickness(4, 1, 4, 1), Background = BR_BG
+                    Header = row, Padding = new Thickness(4, 1, 4, 1), Background = BR_BG,
+                    ToolTip = firstViol?.Description
                 };
                 subItem.MouseEnter += (s2, e2) => ((TreeViewItem)s2).Background = BR_BG2;
                 subItem.MouseLeave += (s2, e2) => ((TreeViewItem)s2).Background = BR_BG;
+                // Double-clic → naviguer via SpaceGlobalId ou coordonnées Location
+                if (firstViol != null)
+                {
+                    string capturedGuid = firstViol.SpaceGlobalId;
+                    double[] capturedLoc = firstViol.Location;
+                    subItem.MouseDoubleClick += (s2, e2) =>
+                    {
+                        e2.Handled = true;
+                        bool navigated = !string.IsNullOrEmpty(capturedGuid) && NavigateToElementByGuid(capturedGuid);
+                        if (!navigated && capturedLoc != null && capturedLoc.Length >= 2)
+                            NavigateToLocation(capturedLoc);
+                    };
+                }
                 spaceItem.Items.Add(subItem);
             }
 
             return spaceItem;
+        }
+
+        // =====================================================================
+        //  NAVIGATION VERS ÉLÉMENT REVIT
+        // =====================================================================
+        private bool NavigateToElementByGuid(string globalId)
+        {
+            try
+            {
+                if (UiApp == null) return false;
+                var doc   = UiApp.ActiveUIDocument?.Document;
+                var uidoc = UiApp.ActiveUIDocument;
+                if (doc == null || uidoc == null) return false;
+
+                RevitDB.Element elem = null;
+
+                // 1) Chercher par UniqueId Revit (format GUID, ex: CHANT-003)
+                elem = new RevitDB.FilteredElementCollector(doc)
+                    .WhereElementIsNotElementType()
+                    .Cast<RevitDB.Element>()
+                    .FirstOrDefault(e => e.UniqueId == globalId);
+
+                // 2) Sinon, chercher par paramètre IFC GUID (ex: CHANT-002/004/005 - espaces IFC)
+                if (elem == null)
+                {
+                    var ifcGuidParamNames = new[] { "IfcGUID", "IFC GUID", "GlobalId" };
+                    elem = new RevitDB.FilteredElementCollector(doc)
+                        .WhereElementIsNotElementType()
+                        .Cast<RevitDB.Element>()
+                        .FirstOrDefault(e =>
+                        {
+                            foreach (var pName in ifcGuidParamNames)
+                            {
+                                var p = e.LookupParameter(pName);
+                                if (p != null && p.AsString() == globalId) return true;
+                            }
+                            return false;
+                        });
+                }
+
+                if (elem == null) return false;
+
+                // Sélectionner l'élément
+                uidoc.Selection.SetElementIds(new List<RevitDB.ElementId> { elem.Id });
+
+                // Zoomer sur l'élément
+                var bb = elem.get_BoundingBox(null);
+                if (bb != null)
+                {
+                    double expand = 5.0;
+                    var uiView = uidoc.GetOpenUIViews().FirstOrDefault();
+                    uiView?.ZoomAndCenterRectangle(
+                        new RevitDB.XYZ(bb.Min.X - expand, bb.Min.Y - expand, bb.Min.Z),
+                        new RevitDB.XYZ(bb.Max.X + expand, bb.Max.Y + expand, bb.Max.Z));
+                }
+                return true;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Navigue vers une position en coordonnées IFC (mètres) en zoomant sur la zone.
+        /// Utilisé quand SpaceGlobalId est vide (violations CHANT sans UniqueId Revit).
+        /// </summary>
+        private void NavigateToLocation(double[] locMeters)
+        {
+            try
+            {
+                if (UiApp == null) return;
+                var uidoc = UiApp.ActiveUIDocument;
+                if (uidoc == null) return;
+
+                // Convertir mètres → pieds (coordonnées Revit internes)
+                const double M2F = 1.0 / 0.3048;
+                double x = locMeters[0] * M2F;
+                double y = locMeters[1] * M2F;
+                double expand = 16.0; // ~5m autour du point
+
+                var uiView = uidoc.GetOpenUIViews().FirstOrDefault();
+                uiView?.ZoomAndCenterRectangle(
+                    new RevitDB.XYZ(x - expand, y - expand, 0),
+                    new RevitDB.XYZ(x + expand, y + expand, 0));
+            }
+            catch { }
+        }
+
+        // =====================================================================
+        //  EXPORT CSV CHANT-003
+        // =====================================================================
+        private void ExportChant003ToCsv()
+        {
+            try
+            {
+                var viols = _results?.Violations?
+                    .Where(v => v.RuleId == "CHANT-003")
+                    .ToList();
+
+                if (viols == null || viols.Count == 0)
+                {
+                    MessageBox.Show("Aucune violation CHANT-003 à exporter.\nLancez d'abord l'analyse.",
+                        "Export CHANT-003", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                // Déterminer le niveau à partir de la coordonnée Z
+                string GetNiveau(double[] loc)
+                {
+                    if (loc == null || loc.Length < 3) return "Inconnu";
+                    double z = loc[2];
+                    foreach (var lvl in LevelRanges)
+                        if (z >= lvl.ZMin && z < lvl.ZMax) return lvl.Name;
+                    return "Inconnu";
+                }
+
+                string desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                string path = System.IO.Path.Combine(desktop, $"CHANT003_{DateTime.Now:yyyyMMdd_HHmm}.csv");
+
+                var sb = new StringBuilder();
+                // En-tête avec séparateur point-virgule (compatible Excel français)
+                sb.AppendLine("sep=;");
+                sb.AppendLine("Règle;Sévérité;Niveau;Pièce;Hauteur pièce (m);Matériel requis;Recommandation");
+
+                foreach (var v in viols.OrderBy(v => GetNiveau(v.Location)).ThenBy(v => v.SpaceName))
+                {
+                    string niveau  = GetNiveau(v.Location);
+                    string piece   = (v.SpaceName ?? "").Replace(";", ",");
+                    string desc    = (v.Description ?? "").Replace(";", ",");
+                    string reco    = (v.Recommendation ?? "").Replace(";", ",").Replace("\n", " ");
+
+                    // Extraire hauteur et matériel depuis details
+                    string hauteur = "";
+                    string materiel = "";
+                    if (v.Details != null)
+                    {
+                        if (v.Details.TryGetValue("hauteur_piece_m", out object h))
+                            hauteur = h?.ToString() ?? "";
+                        if (v.Details.TryGetValue("materiel_requis", out object m))
+                            materiel = (m?.ToString() ?? "").Replace(";", ",");
+                    }
+
+                    sb.AppendLine($"{v.RuleId};{v.Severity};{niveau};{piece};{hauteur};{materiel};{reco}");
+                }
+
+                File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
+
+                // Ouvrir directement dans Excel
+                System.Diagnostics.Process.Start(path);
+
+                MessageBox.Show($"Export réussi !\n{viols.Count} violations exportées.\n\nFichier : {path}",
+                    "Export CHANT-003", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Erreur export : {ex.Message}", "Export CHANT-003",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         // =====================================================================

@@ -16,6 +16,23 @@ Sévérité: CRITIQUE
 from typing import List, Dict
 from shared.logger import logger
 
+# Mots-clés pour détecter les ascenseurs dans les équipements
+ASCENSEUR_KEYWORDS = [
+    "asc", "ascenseur", "elevator", "lift", "monte-charge", "monte charge",
+    "eqs_ape", "eqs_asc"
+]
+
+
+def _is_ascenseur(eq: Dict) -> bool:
+    name = (eq.get('name', '') or '').lower()
+    ifc  = (eq.get('ifc_type', '') or '').lower()
+    for kw in ASCENSEUR_KEYWORDS:
+        if kw in name:
+            return True
+    if 'transport' in ifc:
+        return True
+    return False
+
 
 class CHANT004GaineAscenseurChecker:
     """Analyseur CHANT-004 - Gaine ascenseur (systématique)"""
@@ -30,41 +47,62 @@ class CHANT004GaineAscenseurChecker:
     def analyze(self, spaces: List[Dict], equipment: List[Dict],
                 slabs: List[Dict], space_types: Dict,
                 doors: List[Dict] = None) -> List[Dict]:
-        """Violation systématique pour chaque gaine ascenseur détectée."""
+        """
+        Violation systématique pour chaque ascenseur détecté.
+        Détection : espaces nommés 'ascenseur' OU équipements spécialisés (EQS_APE).
+        """
         logger.analysis_start(self.RULE_ID)
         self.violations = []
 
-        gaines_ascenseur = space_types.get('gaine_ascenseur', [])
+        # 1) Depuis les espaces (autres maquettes avec rooms nommés)
+        gaines_espaces = space_types.get('gaine_ascenseur', [])
 
-        if not gaines_ascenseur:
-            logger.info(f"    Aucune gaine ascenseur trouvée pour {self.RULE_ID}")
+        # 2) Depuis les équipements spécialisés (maquette ARCHI CHU : EQS_APE ASC 1...)
+        ascenseurs_eq = [eq for eq in (equipment or []) if _is_ascenseur(eq)]
+
+        # Dédoublonner par global_id
+        seen = set()
+        tous = []
+        for item in gaines_espaces:
+            gid = item.get('global_id', '')
+            if gid not in seen:
+                seen.add(gid)
+                tous.append(('espace', item))
+        for item in ascenseurs_eq:
+            gid = item.get('global_id', '')
+            if gid not in seen:
+                seen.add(gid)
+                tous.append(('equipment', item))
+
+        if not tous:
+            logger.info(f"    Aucun ascenseur trouvé pour {self.RULE_ID}")
             return self.violations
 
-        logger.info(f"   {len(gaines_ascenseur)} gaines ascenseur — signalement risque chute...")
+        logger.info(f"   {len(tous)} ascenseurs — signalement risque chute ({len(gaines_espaces)} espaces, {len(ascenseurs_eq)} équipements)...")
 
-        for gaine in gaines_ascenseur:
-            gaine_name   = gaine.get('name', 'Inconnu')
-            gaine_height = gaine.get('height_m') or 0
+        for source, item in tous:
+            name   = item.get('name', 'Inconnu')
+            height = item.get('height_m') or 0
 
             self.violations.append({
-                "rule_id": self.RULE_ID,
-                "severity": "CRITIQUE",
-                "space_name": gaine_name,
-                "space_global_id": gaine.get('global_id', ''),
-                "description": f"Gaine ascenseur — risque de chute mortelle avant installation",
+                "rule_id":         self.RULE_ID,
+                "severity":        "CRITIQUE",
+                "space_name":      name,
+                "space_global_id": item.get('global_id', ''),
+                "description":     "Ascenseur — gaine vide avant installation, risque de chute mortelle",
                 "details": {
-                    "gaine_height_m": round(gaine_height, 2),
+                    "hauteur_m": round(height, 2),
+                    "source":    source,
                 },
-                "location": list(gaine.get('centroid', [0, 0, 0])),
+                "location": list(item.get('centroid', [0, 0, 0])),
                 "recommendation": (
-                    f"Gaine ascenseur '{gaine_name}' ({gaine_height:.1f}m) : "
+                    f"Ascenseur '{name}' : gaine vide pendant la phase chantier. "
                     f"Mettre en place impérativement des protections collectives "
                     f"(garde-corps, filet de sécurité, balisage) avant tout accès. "
-                    f"Interdire l'accès sans équipement de protection individuelle (EPI)."
+                    f"Interdire l'accès sans EPI. Poser des panneaux d'interdiction d'accès."
                 )
             })
-            logger.rule_violation(self.RULE_ID, gaine_name,
-                                  f"Gaine ascenseur détectée ({gaine_height:.1f}m)")
+            logger.rule_violation(self.RULE_ID, name, "Ascenseur — gaine vide risque chute")
 
         logger.analysis_complete(self.RULE_ID, len(self.violations))
         return self.violations

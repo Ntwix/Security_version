@@ -1,7 +1,3 @@
-# ============================================================================
-# DÉPENDANCES PYTHON - ZONE 1 LOCAUX ÉLECTRIQUES
-# ============================================================================
-
 # === EXTRACTION IFC ===
 ifcopenshell==0.7.0         # Lecture fichiers IFC
 ifcopenshell-python==0.7.0  # Bindings Python pour IFC

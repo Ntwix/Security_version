@@ -64,6 +64,7 @@
     <Compile Include="UI\RiskPanelPage.xaml.cs" />
     <Compile Include="UI\TrappesFormDialog.cs" />
     <Compile Include="UI\ChargeSupportsDialog.cs" />
+    <Compile Include="UI\Chant001ManutentionDialog.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="CHU_SecurityAnalyzer.addin">

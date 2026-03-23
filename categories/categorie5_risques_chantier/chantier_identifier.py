@@ -17,7 +17,7 @@ from shared.logger import logger
 LOCAL_TECHNIQUE_KEYWORDS = [
     "local technique", "local.technique", "lt vdi", "local vdi",
     "local électrique", "salle électrique", "tgbt", "tableau général",
-    "gaine technique", "g.t", "local elec", "chaufferie", "local cvc"
+    "local elec", "chaufferie", "local cvc"
 ]
 LOCAL_TECHNIQUE_PREFIXES = ["DOM-ITEC", "DOM-GTEC", "DOM-TGBT", "DOM-LT"]
 

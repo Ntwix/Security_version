@@ -15,7 +15,6 @@
         "LT VDI",
         "Local VDI",
         "Local armoire VDI",
-        "Gaine Technique",
         "local électrique",
         "salle électrique",
         "local tgbt",
@@ -253,7 +252,7 @@
 
   "regex_patterns": {
     "description": "Patterns regex pour extraction avancée",
-    "technical_room_pattern": "(?i)(local|salle|lt|gaine)\\s*(technique|électrique|tgbt|vdi)",
+    "technical_room_pattern": "(?i)(local|salle|lt)\\s*(technique|électrique|tgbt|vdi)",
     "wet_room_pattern": "(?i)(douche|bain|sdb|sanitaire|wc|toilet)",
     "cuisine_pattern": "(?i)(cuisine|réfectoire|self|légumerie|office|cafétéria)",
     "equipment_weight_pattern": "(?i)poids[:\\s]*(\\d+)\\s*kg"

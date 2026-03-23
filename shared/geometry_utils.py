@@ -1,9 +1,5 @@
-"""
-============================================================================
-GEOMETRY UTILS - Utilitaires Calculs Géométriques
-============================================================================
-Fonctions pour calculs géométriques 3D (distances, volumes, dimensions, etc.)
-"""
+"""GEOMETRY UTILS - Utilitaires Calculs Géométriques /Fonctions pour calculs géométriques 3D (distances, volumes, dimensions, etc.)"""
+
 
 import numpy as np
 from typing import Tuple, List, Optional
@@ -18,11 +14,9 @@ class GeometryUtils:
                              point2: Tuple[float, float, float]) -> float:
         """
         Calcule distance euclidienne entre 2 points 3D
-
         Args:
             point1: (x, y, z) premier point
             point2: (x, y, z) second point
-
         Returns:
             Distance en mètres
         """
@@ -37,11 +31,9 @@ class GeometryUtils:
                                      bbox_max: Tuple[float, float, float]) -> float:
         """
         Calcule volume d'une bounding box
-
         Args:
             bbox_min: (x_min, y_min, z_min)
             bbox_max: (x_max, y_max, z_max)
-
         Returns:
             Volume en m³
         """
@@ -56,11 +48,9 @@ class GeometryUtils:
                          bbox_max: Tuple[float, float, float]) -> float:
         """
         Obtient la dimension maximale d'un objet
-
         Args:
             bbox_min: (x_min, y_min, z_min)
             bbox_max: (x_max, y_max, z_max)
-
         Returns:
             Dimension max en mètres
         """
@@ -92,16 +82,7 @@ class GeometryUtils:
     @staticmethod
     def get_centroid(bbox_min: Tuple[float, float, float],
                     bbox_max: Tuple[float, float, float]) -> Tuple[float, float, float]:
-        """
-        Calcule centre géométrique (centroïde)
 
-        Args:
-            bbox_min: (x_min, y_min, z_min)
-            bbox_max: (x_max, y_max, z_max)
-
-        Returns:
-            (x, y, z) du centre
-        """
         return (
             (bbox_min[0] + bbox_max[0]) / 2,
             (bbox_min[1] + bbox_max[1]) / 2,
@@ -112,17 +93,6 @@ class GeometryUtils:
     def is_point_in_bbox(point: Tuple[float, float, float],
                         bbox_min: Tuple[float, float, float],
                         bbox_max: Tuple[float, float, float]) -> bool:
-        """
-        Vérifie si un point est dans une bounding box
-
-        Args:
-            point: (x, y, z) point à tester
-            bbox_min: (x_min, y_min, z_min)
-            bbox_max: (x_max, y_max, z_max)
-
-        Returns:
-            True si point dans bbox
-        """
         return (
             bbox_min[0] <= point[0] <= bbox_max[0] and
             bbox_min[1] <= point[1] <= bbox_max[1] and
@@ -132,16 +102,7 @@ class GeometryUtils:
     @staticmethod
     def calculate_floor_area(bbox_min: Tuple[float, float, float],
                            bbox_max: Tuple[float, float, float]) -> float:
-        """
-        Calcule surface au sol
 
-        Args:
-            bbox_min: (x_min, y_min, z_min)
-            bbox_max: (x_max, y_max, z_max)
-
-        Returns:
-            Surface en m²
-        """
         width = abs(bbox_max[0] - bbox_min[0])
         depth = abs(bbox_max[1] - bbox_min[1])
 
@@ -150,16 +111,7 @@ class GeometryUtils:
     @staticmethod
     def get_height(bbox_min: Tuple[float, float, float],
                   bbox_max: Tuple[float, float, float]) -> float:
-        """
-        Obtient hauteur d'un objet
 
-        Args:
-            bbox_min: (x_min, y_min, z_min)
-            bbox_max: (x_max, y_max, z_max)
-
-        Returns:
-            Hauteur en mètres
-        """
         return abs(bbox_max[2] - bbox_min[2])
 
     @staticmethod
@@ -182,11 +134,9 @@ class GeometryUtils:
                                      margin_cm: float = 20) -> float:
         """
         Calcule largeur porte minimale pour passage équipement
-
         Args:
             equipment_max_dim_m: Dimension max équipement en mètres
             margin_cm: Marge de sécurité en cm
-
         Returns:
             Largeur porte minimale en mètres
         """
@@ -197,11 +147,9 @@ class GeometryUtils:
                           precision: int = 2) -> str:
         """
         Formate coordonnées pour affichage
-
         Args:
             coords: (x, y, z)
             precision: Nombre décimales
-
         Returns:
             String formaté "X: 12.34, Y: 56.78, Z: 90.12"
         """
@@ -211,10 +159,8 @@ class GeometryUtils:
     def parse_ifc_point(ifc_point) -> Tuple[float, float, float]:
         """
         Parse un point IFC en tuple Python
-
         Args:
             ifc_point: Point IFC (IfcCartesianPoint)
-
         Returns:
             (x, y, z)
         """

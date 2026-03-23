@@ -1,7 +1,5 @@
 """
-============================================================================
-IFC EXTRACTOR - Extraction avec support 2 fichiers IFC
-============================================================================
+IFC EXTRACTOR - Extraction avec support 2 fichiers IFC :
 Version modifiee pour accepter 2 fichiers IFC (Architecture + Electrique)
 et fusionner les donnees automatiquement.
 
@@ -22,7 +20,6 @@ from shared.geometry_utils import GeometryUtils
 
 class IFCExtractor:
     """Extracteur de donnees depuis fichiers IFC (support 2 fichiers)"""
-
     def __init__(self, ifc_path: str, ifc_path_elec: str = None):
         self.ifc_path = Path(ifc_path)
         self.ifc_path_elec = Path(ifc_path_elec) if ifc_path_elec else None

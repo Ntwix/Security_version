@@ -50,6 +50,7 @@ namespace CHU_SecurityAnalyzer.UI
             if (_page == null) return;
             _page.Dispatcher.Invoke(() =>
             {
+                _page.UiApp = uiApp;
                 _page.UpdateResults(results, zone);
             });
             Show(uiApp);

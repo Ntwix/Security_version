@@ -1,9 +1,4 @@
-"""
-============================================================================
-ANNOTATION GENERATOR - Génération Rapports d'Annotations
-============================================================================
-Compile les résultats de toutes les règles et génère rapports JSON/Excel.
-"""
+"""ANNOTATION GENERATOR - Génération Rapports d'Annotations/ Compile les résultats de toutes les règles et génère rapports JSON/Excel."""
 
 import json
 from datetime import datetime
@@ -28,7 +23,6 @@ class AnnotationGenerator:
                        ifc_path: str, extraction_summary: Dict):
         """
         Compile tous les résultats
-
         Args:
             violations_by_rule: {rule_id: [violations]}
             ifc_path: Chemin fichier IFC analysé
@@ -85,7 +79,6 @@ class AnnotationGenerator:
     def save_json(self, output_path: str):
         """
         Sauvegarde résultats en JSON
-
         Args:
             output_path: Chemin fichier sortie
         """
@@ -105,7 +98,6 @@ class AnnotationGenerator:
     def save_excel(self, output_path: str):
         """
         Sauvegarde résultats en Excel
-
         Args:
             output_path: Chemin fichier sortie .xlsx
         """

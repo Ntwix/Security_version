@@ -144,6 +144,7 @@ namespace CHU_SecurityAnalyzer.Core
                 BuiltInCategory.OST_ElectricalFixtures,
                 BuiltInCategory.OST_MechanicalEquipment,
                 BuiltInCategory.OST_CableTray,
+                BuiltInCategory.OST_SpecialityEquipment, // Ascenseurs (EQS_APE) depuis ARCHI
             };
 
             foreach (var cat in categories)
@@ -692,6 +693,8 @@ namespace CHU_SecurityAnalyzer.Core
                     return "IfcLightFixture";
                 case BuiltInCategory.OST_CableTray:
                     return "IfcCableCarrierSegment";
+                case BuiltInCategory.OST_SpecialityEquipment:
+                    return "IfcTransportElement";
                 case BuiltInCategory.OST_Conduit:
                     return "IfcCableSegment";
                 case BuiltInCategory.OST_CommunicationDevices:

@@ -1,0 +1,262 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{graphicx}
+\usepackage{multirow}
+
+\geometry{margin=2.5cm}
+
+\definecolor{bleuCHU}{RGB}{0,70,127}
+\definecolor{grisLight}{RGB}{240,240,240}
+
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\textcolor{bleuCHU}{\small Rapport d'Avancement -- CHU Ibn Sina}}
+\lhead{\small BIM Sécurité}
+\rfoot{\thepage}
+\lfoot{\small 10 Mars 2026}
+
+\titleformat{\section}{\large\bfseries\color{bleuCHU}}{}{0em}{\thesection\quad}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries\color{bleuCHU}}{}{0em}{\thesubsection\quad}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=bleuCHU,
+    urlcolor=bleuCHU
+}
+
+\begin{document}
+
+% ─── Page de titre ───────────────────────────────────────────────────────────
+\begin{titlepage}
+    \centering
+
+    % ── Logos ─────────────────────────────────────────
+    \noindent
+    \begin{minipage}[c]{0.45\textwidth}
+        \raggedright
+        \includegraphics[height=2cm]{img1}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[c]{0.45\textwidth}
+        \raggedleft
+        \includegraphics[height=2cm]{img2}
+    \end{minipage}
+
+    \vspace{2.5cm}
+
+    {\LARGE\bfseries\color{bleuCHU} Rapport d'Avancement 2\\[0.5em]}
+
+    {\Large Projet CHU Ibn Sina\\[1em]}
+    \vspace{1.5cm}
+    {\large\bfseries Automatisation des annotations de sécurité sur les\\
+    maquettes 3D à l'aide de l'IA\\[0.3em]}
+    {\normalsize (Projet pilote IBN SINA)\\[2em]}
+
+    \vspace{1cm}
+    \textbf{Réalisée par :}\\
+    {\large Mme TOUINSSI Nouhaila\\[1.5em]}
+
+    \textbf{Encadrée par :}\\
+    {\large Mme HAOUDI Amal}\\
+    {\large M. EZZINE Mohammed\\[1em]}
+
+    \textbf{Directrice :}\\
+    {\large Mme LYASS Mouna\\[2em]}
+
+    \hrule height 2pt
+    \vspace{1em}
+
+    {\large 10 Mars 2026}
+
+    \vspace*{\fill}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ─────────────────────────────────────────────
+\section{Rappel du contexte et évolution du projet}
+
+À l'issue du premier rapport, l'outil avait été validé sur la Zone~1 (Locaux Électriques) avec 648~non-conformités détectées sur la maquette réelle du CHU Ibn Sina. La suite naturelle du projet consistait à étendre la même approche automatique aux zones suivantes : Gaines Techniques, Faux Plafonds Techniques et Planchers Techniques.
+
+Cette deuxième période de développement a donc porté sur la \textbf{conception, l'implémentation et la mise en œuvre de 13~nouvelles règles de sécurité} réparties sur ces trois zones, portant le total à \textbf{17~règles automatisées} couvrant l'ensemble des installations techniques du bâtiment.
+
+% ─────────────────────────────────────────────
+\section{Ce qui a été réalisé}
+
+\subsection{Extension du système d'analyse à trois nouvelles zones}
+
+Le programme analyse désormais \textbf{4 zones à risque} distinctes, avec \textbf{17 règles de sécurité} au total :
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{clcc}
+\toprule
+\textbf{Zone} & \textbf{Description} & \textbf{Nb de règles} & \textbf{Statut} \\
+\midrule
+Zone 1 & Locaux Électriques           & 4 & Opérationnel \\
+Zone 2 & Gaines Techniques Verticales & 5 & Opérationnel \\
+Zone 3 & Faux Plafonds Techniques     & 3 & Opérationnel \\
+Zone 4 & Planchers Techniques         & 5 & Opérationnel (formulaire) \\
+\bottomrule
+\end{tabular}
+\caption{Zones analysées et nombre de règles}
+\end{table}
+
+\subsection{Détail des nouvelles règles implémentées}
+
+\subsubsection*{Zone 2 -- Gaines Techniques Verticales (5 règles)}
+
+Les gaines techniques verticales sont des espaces dans lesquels transitent les réseaux électriques sur toute la hauteur du bâtiment. Leur analyse automatique a nécessité le développement de cinq règles distinctes :
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{1.8cm}p{9.5cm}p{2cm}}
+\toprule
+\textbf{Règle} & \textbf{Vérification} & \textbf{Niveau} \\
+\midrule
+GAINE-001 & Toute gaine de hauteur supérieure à 1~m présente un risque de chute d'objets. Un avertissement est émis systématiquement, qu'une protection soit ou non modélisée dans la maquette. & Moyenne \\[0.5em]
+GAINE-002 & La distance entre les supports courant fort et courant faible doit être supérieure ou égale à 30~cm, afin d'éviter les interférences électromagnétiques entre réseaux. & Critique \\[0.5em]
+GAINE-003 & Chaque équipement nécessitant une maintenance dans une gaine doit être accessible via une trappe de visite d'au moins 60$\times$60~cm. Cette règle fonctionne via un formulaire interactif : l'outil identifie les équipements dans les gaines, et le responsable indique lesquels nécessitent un accès. & Moyenne \\[0.5em]
+GAINE-004 & Tout chemin de câbles d'une longueur supérieure à 2~m doit être fixé sur un support physique (console, étrier, tige filetée). En l'absence de supports modélisés dans la maquette, toute section dépassant cette longueur génère une alerte avec estimation de la charge. & Haute \\[0.5em]
+GAINE-005 & La charge totale portée par chaque support de chemin de câbles ne doit pas dépasser la capacité admissible, avec une marge de sécurité de 20\%. Le calcul est réalisé à partir des caractéristiques des câbles déclarées par le responsable (matériau, section, quantité), selon la norme NF~C~32-321. & Haute \\
+\bottomrule
+\end{tabular}
+\caption{Règles -- Zone 2}
+\end{table}
+
+\subsubsection*{Zone 3 -- Faux Plafonds Techniques (3 règles)}
+
+Les espaces de faux plafond accueillent une part importante des réseaux électriques horizontaux. Trois règles ont été développées pour couvrir les risques principaux lors des interventions dans ces espaces :
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{1.8cm}p{9.5cm}p{2cm}}
+\toprule
+\textbf{Règle} & \textbf{Vérification} & \textbf{Niveau} \\
+\midrule
+FPLAF-001 & La hauteur du faux plafond est extraite automatiquement depuis la maquette. Toute hauteur dépassant le seuil configuré indique un risque de chute lors des interventions. Différents niveaux de sévérité sont appliqués selon l'importance de la hauteur. & Moyenne \\[0.5em]
+FPLAF-002 & Le poids cumulé des câbles et équipements suspendus dans le faux plafond est comparé à la capacité portante de la structure. Une alerte est générée si la charge dépasse la capacité admissible, marge de sécurité comprise. & Haute \\[0.5em]
+FPLAF-003 & La présence de matériaux générateurs de poussières dans les faux plafonds (laine minérale, fibre de verre, isolants, flocage...) est détectée automatiquement. Une alerte est émise pour chaque espace concerné, afin d'anticiper les risques sanitaires lors des travaux. & Moyenne \\
+\bottomrule
+\end{tabular}
+\caption{Règles -- Zone 3}
+\end{table}
+
+\subsubsection*{Zone 4 -- Planchers Techniques (5 règles)}
+
+Les planchers techniques présentent des risques spécifiques qui ne peuvent pas toujours être lus directement dans la maquette, car ils dépendent des conditions réelles du chantier. Une approche par \textbf{formulaire interactif} a donc été retenue :
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{p{1.8cm}p{9.5cm}p{2cm}}
+\toprule
+\textbf{Règle} & \textbf{Vérification} & \textbf{Niveau} \\
+\midrule
+PLAN-001 & Présence de planchers techniques dans le bâtiment : l'outil demande confirmation et propose une liste des types possibles (faux-plancher surélevé, caillebotis, dalle amovible, plancher collaborant...) & Haute \\[0.5em]
+PLAN-002 & Les câbles transitant sous le plancher technique sont-ils protégés mécaniquement ? & Haute \\[0.5em]
+PLAN-003 & Existe-t-il des risques d'humidité sous le plancher (infiltrations, condensation) pouvant affecter les installations électriques ? & Haute \\[0.5em]
+PLAN-004 & Les dispositifs de levage des dalles amovibles présentent-ils un risque d'écrasement des doigts lors des interventions ? & Haute \\[0.5em]
+PLAN-005 & Synthèse automatique de l'ensemble des réponses : l'outil génère un rapport de risques consolidé à partir des informations déclarées. & Haute \\
+\bottomrule
+\end{tabular}
+\caption{Règles -- Zone 4}
+\end{table}
+
+\subsection{Évolution du plugin Revit}
+
+En parallèle du développement des nouvelles règles d'analyse, le plugin Revit intégré dans Autodesk a également été enrichi :
+
+\begin{itemize}
+    \item \textbf{Panneau de résultats dockable} : un panneau permanent s'affiche dans Revit et présente les non-conformités détectées, filtrables par zone et par règle, sans avoir à ouvrir de fichier externe.
+    \vspace{0.5em}
+    \item \textbf{Thème visuel clair} : l'interface a été redessinée pour améliorer la lisibilité et le confort d'utilisation au quotidien.
+    \vspace{0.5em}
+    \item \textbf{Formulaires interactifs intégrés} : pour les règles GAINE-003, GAINE-005 et PLAN-001 à PLAN-005, des boîtes de dialogue apparaissent directement dans Revit, permettant au responsable de compléter les informations manquantes sans quitter le logiciel.
+    \vspace{0.5em}
+    \item \textbf{Export CSV} : les résultats de chaque règle peuvent être exportés en un clic au format tableur, pour diffusion aux équipes ou archivage.
+\end{itemize}
+
+\subsection{Rapports de sortie}
+
+Chaque analyse produit désormais :
+
+\begin{itemize}
+    \item Un fichier \textbf{JSON} structuré (exploitable par d'autres logiciels)
+    \item Un fichier \textbf{Excel} avec 3 onglets : Violations, Statistiques, Par Règle
+    \item Une \textbf{visualisation directe dans Revit} avec vues dupliquées, coloration des zones à risque et symboles graphiques sur les plans
+\end{itemize}
+
+% ─────────────────────────────────────────────
+\section{Résultats obtenus sur les maquettes CHU Ibn Sina}
+
+Les analyses ont été exécutées sur les maquettes réelles du projet, en complément des résultats déjà obtenus sur la Zone~1.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{llc}
+\toprule
+\textbf{Zone} & \textbf{Règle} & \textbf{Non-conformités détectées} \\
+\midrule
+\multirow{5}{*}{Zone 2 -- Gaines}
+ & GAINE-001 (chute objets)          & Signalement systématique \\
+ & GAINE-002 (croisement réseaux)    & Selon espacement dans maquette \\
+ & GAINE-003 (trappes accès)         & Via formulaire interactif \\
+ & GAINE-004 (sections sans support) & Selon longueurs CDC $>$ 2m \\
+ & GAINE-005 (calcul charge)         & Via formulaire interactif \\
+\midrule
+\multirow{3}{*}{Zone 3 -- Faux plafonds}
+ & FPLAF-001 (chute hauteur)         & Selon hauteurs espaces \\
+ & FPLAF-002 (surcharge plafond)     & Selon poids équipements \\
+ & FPLAF-003 (poussières)            & Selon matériaux détectés \\
+\midrule
+\multirow{5}{*}{Zone 4 -- Planchers}
+ & PLAN-001 à PLAN-005               & Via formulaire interactif \\
+\bottomrule
+\end{tabular}
+\caption{Résultats Zones 2, 3 et 4}
+\end{table}
+
+\textit{Note : Les règles à formulaire interactif (GAINE-003, GAINE-005, PLAN-001 à PLAN-005) produisent des résultats variables selon les réponses fournies par le responsable lors de chaque session d'analyse. Les résultats chiffrés précis seront consolidés lors d'une session de validation avec les encadrants.}
+
+% ─────────────────────────────────────────────
+\section{Outils et technologies utilisés}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{Composant} & \textbf{Technologie} \\
+\midrule
+Analyse des maquettes & Python 3 + ifcopenshell \\
+Plugin Revit          & C\# .NET (Revit API 2023) \\
+Format d'échange      & IFC (Industry Foundation Classes) \\
+Rapports              & JSON + Excel \\
+Gestion de version    & Git + GitHub \\
+\bottomrule
+\end{tabular}
+\caption{Stack technologique}
+\end{table}
+
+% ─────────────────────────────────────────────
+\section{Réorientation décidée en fin de période}
+
+À l'issue de cette phase de développement, et après présentation des avancées à la directrice du projet, une \textbf{décision de réorientation stratégique} a été prise.
+
+Il est apparu que les quatre zones développées jusqu'ici -- bien que techniquement complètes -- traitent principalement des \textbf{risques liés aux études techniques} : conformité des installations, dimensionnement, respects des normes électriques. Ces risques sont importants mais ne correspondent pas à l'urgence du moment.
+
+La priorité identifiée par la direction est différente : il s'agit de \textbf{protéger les ouvriers pendant la phase de travaux d'installation}, qui est en cours d'engagement sur le chantier du CHU Ibn Sina.
+
+En conséquence, le développement suivant sera entièrement concentré sur une \textbf{cinquième catégorie dédiée aux risques chantier}, qui constituera le livrable central du projet. Les zones 1 à 4 restent disponibles dans l'outil et continueront d'évoluer, mais la catégorie Risques Chantier devient la priorité absolue.
+
+\end{document}

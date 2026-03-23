@@ -84,6 +84,10 @@ namespace CHU_SecurityAnalyzer.Commands
                 if (zone == "2")
                     results = HandleGaine005ChargeForm(results, resultPath);
 
+                // === Etape 6d : CHANT-001 — Formulaire chemin d'accès manutention (Catégorie 5) ===
+                if (zone == "5")
+                    results = HandleChant001ManutentionForm(results, resultPath);
+
                 // === Etape 7 : Dupliquer vues + appliquer coloration et symboles ===
                 var vizResult = ApplyVisualizationsToAllViews(doc, uiDoc, results, data);
 
@@ -242,6 +246,132 @@ namespace CHU_SecurityAnalyzer.Commands
             return results;
         }
 
+        // =====================================================================
+        //  CHANT-001 — FORMULAIRE CHEMIN D'ACCES MANUTENTION
+        // =====================================================================
+
+        /// <summary>
+        /// Détecte la violation CHANT-001, ouvre le formulaire chemin d'accès,
+        /// puis remplace la violation générique par des violations par obstacle bloquant.
+        /// </summary>
+        private AnalysisResults HandleChant001ManutentionForm(AnalysisResults results, string resultJsonPath)
+        {
+            if (results?.Violations == null) return results;
+
+            var marker = results.Violations.FirstOrDefault(v => v.RuleId == "CHANT-001");
+            if (marker == null) return results;
+
+            // Parser les données depuis le JSON brut
+            var equipements = new List<CHU_SecurityAnalyzer.UI.Chant001EquipementLourd>();
+            var obstacles   = new List<CHU_SecurityAnalyzer.UI.Chant001Obstacle>();
+
+            try
+            {
+                string rawJson = File.ReadAllText(resultJsonPath, System.Text.Encoding.UTF8);
+                ParseChant001Details(rawJson, out equipements, out obstacles);
+            }
+            catch { }
+
+            // Supprimer la violation marker
+            results.Violations.Remove(marker);
+
+            if (equipements == null || equipements.Count == 0)
+                return results;
+
+            // Ouvrir le formulaire WPF
+            var dialog = new CHU_SecurityAnalyzer.UI.Chant001ManutentionDialog(equipements, obstacles);
+            bool? dialogResult = dialog.ShowDialog();
+
+            if (dialogResult != true || dialog.ViolationResults == null
+                || dialog.ViolationResults.Count == 0)
+                return results;
+
+            // Créer une violation par obstacle bloquant détecté
+            foreach (var v in dialog.ViolationResults)
+            {
+                string typeLabel = v.ObstacleType == "escalier" ? "Escalier"
+                                 : v.ObstacleType == "ascenseur" ? "Ascenseur"
+                                 : "Porte";
+                results.Violations.Add(new ViolationData
+                {
+                    RuleId        = "CHANT-001",
+                    Severity      = "HAUTE",
+                    SpaceName     = v.LocalName ?? v.EquipementName,
+                    SpaceGlobalId = v.LocalGlobalId ?? "",
+                    Description   = $"{typeLabel} \"{v.ObstacleName}\" ({v.ObstacleWidthM:F2} m) trop étroit(e) pour {v.EquipementName} ({v.EquipDimMaxM:F2} m)",
+                    Location      = v.Location,
+                    Recommendation =
+                        $"Élargir {typeLabel.ToLower()} \"{v.ObstacleName}\" à au moins {v.EquipDimMaxM:F2} m " +
+                        $"pour permettre le passage de {v.EquipementName} vers {v.LocalName}."
+                });
+            }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Parse les équipements lourds et obstacles CHANT-001 depuis le JSON brut.
+        /// </summary>
+        private void ParseChant001Details(string rawJson,
+            out List<CHU_SecurityAnalyzer.UI.Chant001EquipementLourd> equipements,
+            out List<CHU_SecurityAnalyzer.UI.Chant001Obstacle> obstacles)
+        {
+            equipements = new List<CHU_SecurityAnalyzer.UI.Chant001EquipementLourd>();
+            obstacles   = new List<CHU_SecurityAnalyzer.UI.Chant001Obstacle>();
+
+            try
+            {
+                // Extraire "equipements_lourds"
+                string eq = ExtractJsonArray(rawJson, "equipements_lourds");
+                if (!string.IsNullOrEmpty(eq))
+                {
+                    using (var ms = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(eq)))
+                    {
+                        var ser = new System.Runtime.Serialization.Json.DataContractJsonSerializer(
+                            typeof(List<CHU_SecurityAnalyzer.UI.Chant001EquipementLourd>));
+                        equipements = (List<CHU_SecurityAnalyzer.UI.Chant001EquipementLourd>)ser.ReadObject(ms);
+                    }
+                }
+
+                // Extraire "obstacles_disponibles"
+                string obs = ExtractJsonArray(rawJson, "obstacles_disponibles");
+                if (!string.IsNullOrEmpty(obs))
+                {
+                    using (var ms = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(obs)))
+                    {
+                        var ser = new System.Runtime.Serialization.Json.DataContractJsonSerializer(
+                            typeof(List<CHU_SecurityAnalyzer.UI.Chant001Obstacle>));
+                        obstacles = (List<CHU_SecurityAnalyzer.UI.Chant001Obstacle>)ser.ReadObject(ms);
+                    }
+                }
+            }
+            catch { }
+
+            if (equipements == null) equipements = new List<CHU_SecurityAnalyzer.UI.Chant001EquipementLourd>();
+            if (obstacles   == null) obstacles   = new List<CHU_SecurityAnalyzer.UI.Chant001Obstacle>();
+        }
+
+        /// <summary>Extrait un tableau JSON par clé depuis le JSON brut.</summary>
+        private static string ExtractJsonArray(string json, string key)
+        {
+            string marker = $"\"{key}\"";
+            int markerIdx = json.IndexOf(marker);
+            if (markerIdx < 0) return null;
+
+            int arrStart = json.IndexOf('[', markerIdx + marker.Length);
+            if (arrStart < 0) return null;
+
+            int depth = 0, arrEnd = -1;
+            for (int i = arrStart; i < json.Length; i++)
+            {
+                if (json[i] == '[') depth++;
+                else if (json[i] == ']') { depth--; if (depth == 0) { arrEnd = i; break; } }
+            }
+            if (arrEnd < 0) return null;
+
+            return json.Substring(arrStart, arrEnd - arrStart + 1);
+        }
+
         /// <summary>
         /// Extrait le tableau cdc_summary et les paramètres de capacité
         /// depuis le JSON brut du résultat Python GAINE-005.
@@ -395,6 +525,7 @@ namespace CHU_SecurityAnalyzer.Commands
                     lineStyles = GetOrCreateLineStyles(doc);
                     txStyles.Commit();
                 }
+
 
                 // === Transaction 2a : charger familles manquantes seulement ===
                 string elecDir = Path.Combine(PROJECT_DIR, "RevitPlugin", "Families", FAMILIES_ELEC_DIR);
@@ -1012,6 +1143,13 @@ namespace CHU_SecurityAnalyzer.Commands
                     "  /\\  Triangle orange = CHUTE HAUTEUR elevee (FPLAF-001 MOYENNE)\n" +
                     "  +   Croix bleue     = SURCHARGE PLAFOND (FPLAF-002)\n" +
                     "  O   Cercle bleu     = POUSSIERES (FPLAF-003)\n";
+            if (zone == "5" || zone == "all")
+                summary +=
+                    "  Cercle orange plein  = MANUTENTION equipement lourd (CHANT-001)\n" +
+                    "  Carre rouge plein    = ACCES ELECTRIQUE habilitation requise (CHANT-002)\n" +
+                    "  Triangle jaune plein = TRAVAIL EN HAUTEUR (CHANT-003)\n" +
+                    "  Losange rouge plein  = GAINE ASCENSEUR danger chute (CHANT-004)\n" +
+                    "  Pentagone cyan plein = VENTILATION locale requise (CHANT-005)\n";
 
             summary += "\nLes vues originales ne sont PAS modifiees.\n" +
                 "Consultez les vues prefixees \"ZONES RISQUES -\" dans le navigateur.\n\n" +
@@ -1029,7 +1167,7 @@ namespace CHU_SecurityAnalyzer.Commands
             using (var form = new System.Windows.Forms.Form())
             {
                 form.Text = "BIM Conformite - Analyse";
-                form.Size = new System.Drawing.Size(420, 320);
+                form.Size = new System.Drawing.Size(420, 240);
                 form.StartPosition = FormStartPosition.CenterScreen;
                 form.FormBorderStyle = FormBorderStyle.FixedDialog;
                 form.MaximizeBox = false;
@@ -1045,11 +1183,72 @@ namespace CHU_SecurityAnalyzer.Commands
 
                 var radioButtons = new RadioButton[]
                 {
-                    new RadioButton { Text = "Locaux Electriques (ELEC-001 a 004)", Location = new System.Drawing.Point(30, 55), Size = new System.Drawing.Size(350, 25), Checked = true },
-                    new RadioButton { Text = "Gaines Techniques (GAINE-001 a 005)", Location = new System.Drawing.Point(30, 85), Size = new System.Drawing.Size(350, 25) },
-                    new RadioButton { Text = "Faux Plafonds Techniques (FPLAF-001 a 003)", Location = new System.Drawing.Point(30, 115), Size = new System.Drawing.Size(350, 25) },
-                    new RadioButton { Text = "Planchers Techniques (PLAN-001 a 005)", Location = new System.Drawing.Point(30, 145), Size = new System.Drawing.Size(350, 25) },
-                    new RadioButton { Text = "Toutes les categories", Location = new System.Drawing.Point(30, 175), Size = new System.Drawing.Size(350, 25) }
+                    new RadioButton { Text = "Risques Chantier (CHANT-001 a 005)", Location = new System.Drawing.Point(30, 60), Size = new System.Drawing.Size(350, 25), Checked = true },
+                    new RadioButton { Text = "Autre (Locaux Elec, Gaines, Faux Plafonds, Planchers)", Location = new System.Drawing.Point(30, 95), Size = new System.Drawing.Size(350, 25) },
+                };
+
+                var btnOk = new Button
+                {
+                    Text = "Analyser",
+                    DialogResult = DialogResult.OK,
+                    Location = new System.Drawing.Point(170, 145),
+                    Size = new System.Drawing.Size(90, 35),
+                    Font = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Bold)
+                };
+
+                var btnCancel = new Button
+                {
+                    Text = "Annuler",
+                    DialogResult = DialogResult.Cancel,
+                    Location = new System.Drawing.Point(270, 145),
+                    Size = new System.Drawing.Size(90, 35)
+                };
+
+                form.Controls.Add(label);
+                foreach (var rb in radioButtons) form.Controls.Add(rb);
+                form.Controls.Add(btnOk);
+                form.Controls.Add(btnCancel);
+                form.AcceptButton = btnOk;
+                form.CancelButton = btnCancel;
+
+                if (form.ShowDialog() == DialogResult.OK)
+                {
+                    // Radio 0 = Risques Chantier → zone "5"
+                    // Radio 1 = Autre → ouvre une 2ème fenêtre avec les autres catégories
+                    if (radioButtons[0].Checked) return "5";
+                    if (radioButtons[1].Checked) return ShowOtherCategoriesDialog();
+                }
+
+                return null;
+            }
+        }
+
+        private string ShowOtherCategoriesDialog()
+        {
+            using (var form = new System.Windows.Forms.Form())
+            {
+                form.Text = "BIM Conformite - Autre categorie";
+                form.Size = new System.Drawing.Size(420, 310);
+                form.StartPosition = FormStartPosition.CenterScreen;
+                form.FormBorderStyle = FormBorderStyle.FixedDialog;
+                form.MaximizeBox = false;
+                form.MinimizeBox = false;
+
+                var label = new Label
+                {
+                    Text = "Selectionnez la categorie a analyser :",
+                    Location = new System.Drawing.Point(20, 20),
+                    Size = new System.Drawing.Size(370, 25),
+                    Font = new System.Drawing.Font("Segoe UI", 10, System.Drawing.FontStyle.Bold)
+                };
+
+                var radioButtons = new RadioButton[]
+                {
+                    new RadioButton { Text = "Locaux Electriques (ELEC-001 a 004)",          Location = new System.Drawing.Point(30, 55),  Size = new System.Drawing.Size(350, 25), Checked = true },
+                    new RadioButton { Text = "Gaines Techniques (GAINE-001 a 005)",           Location = new System.Drawing.Point(30, 85),  Size = new System.Drawing.Size(350, 25) },
+                    new RadioButton { Text = "Faux Plafonds Techniques (FPLAF-001 a 003)",    Location = new System.Drawing.Point(30, 115), Size = new System.Drawing.Size(350, 25) },
+                    new RadioButton { Text = "Planchers Techniques (PLAN-001 a 005)",         Location = new System.Drawing.Point(30, 145), Size = new System.Drawing.Size(350, 25) },
+                    new RadioButton { Text = "Toutes les categories",                          Location = new System.Drawing.Point(30, 175), Size = new System.Drawing.Size(350, 25) },
                 };
 
                 var btnOk = new Button
@@ -1060,7 +1259,6 @@ namespace CHU_SecurityAnalyzer.Commands
                     Size = new System.Drawing.Size(90, 35),
                     Font = new System.Drawing.Font("Segoe UI", 9, System.Drawing.FontStyle.Bold)
                 };
-
                 var btnCancel = new Button
                 {
                     Text = "Annuler",
@@ -1078,15 +1276,12 @@ namespace CHU_SecurityAnalyzer.Commands
 
                 if (form.ShowDialog() == DialogResult.OK)
                 {
-                    for (int i = 0; i < radioButtons.Length; i++)
-                    {
-                        if (radioButtons[i].Checked)
-                        {
-                            return i < 4 ? (i + 1).ToString() : "all";
-                        }
-                    }
+                    if (radioButtons[0].Checked) return "1";
+                    if (radioButtons[1].Checked) return "2";
+                    if (radioButtons[2].Checked) return "3";
+                    if (radioButtons[3].Checked) return "4";
+                    if (radioButtons[4].Checked) return "all";
                 }
-
                 return null;
             }
         }
@@ -1488,6 +1683,22 @@ namespace CHU_SecurityAnalyzer.Commands
                             case "GAINE-003":
                                 DrawTriangleSymbol(doc, view, center, s, gs);
                                 break;
+                            // ── Catégorie 5 — Risques Chantier ──────────────
+                            case "CHANT-001":
+                                DrawArrowSymbol(doc, view, center, s, gs);
+                                break;
+                            case "CHANT-002":
+                                DrawLightningSymbol(doc, view, center, s, gs);
+                                break;
+                            case "CHANT-003":
+                                DrawHelmetSymbol(doc, view, center, s, gs);
+                                break;
+                            case "CHANT-004":
+                                DrawForbiddenSymbol(doc, view, center, s, gs);
+                                break;
+                            case "CHANT-005":
+                                DrawVentSymbol(doc, view, center, s, gs);
+                                break;
                         }
 
                         // Placer le texte a cote
@@ -1711,6 +1922,147 @@ namespace CHU_SecurityAnalyzer.Commands
             DrawLineInView(doc, view, tl, br, gs);
         }
 
+        // ── Symboles CHANT — FilledRegion pleins et colorés ───────────────────
+
+        /// <summary>Cercle plein orange — CHANT-001 Manutention</summary>
+        private void DrawArrowSymbol(Document doc, Autodesk.Revit.DB.View view, XYZ center, double size, GraphicsStyle gs)
+            => DrawFilledCircle(doc, view, center, size * 0.85, new Color(230, 130, 0));
+
+        /// <summary>Carré plein rouge — CHANT-002 Accès électrique</summary>
+        private void DrawLightningSymbol(Document doc, Autodesk.Revit.DB.View view, XYZ center, double size, GraphicsStyle gs)
+            => DrawFilledSquare(doc, view, center, size * 0.85, new Color(200, 30, 30));
+
+        /// <summary>Triangle plein jaune/or — CHANT-003 Travail en hauteur</summary>
+        private void DrawHelmetSymbol(Document doc, Autodesk.Revit.DB.View view, XYZ center, double size, GraphicsStyle gs)
+            => DrawFilledTriangle(doc, view, center, size * 0.85, new Color(220, 160, 0));
+
+        /// <summary>Losange plein rouge foncé — CHANT-004 Gaine ascenseur</summary>
+        private void DrawForbiddenSymbol(Document doc, Autodesk.Revit.DB.View view, XYZ center, double size, GraphicsStyle gs)
+            => DrawFilledDiamond(doc, view, center, size * 0.85, new Color(160, 0, 0));
+
+        /// <summary>Pentagone plein cyan — CHANT-005 Ventilation</summary>
+        private void DrawVentSymbol(Document doc, Autodesk.Revit.DB.View view, XYZ center, double size, GraphicsStyle gs)
+            => DrawFilledPentagon(doc, view, center, size * 0.85, new Color(40, 160, 180));
+
+        // ── Helpers FilledRegion ──────────────────────────────────────────────
+
+        private void DrawFilledRegion(Document doc, Autodesk.Revit.DB.View view, IList<XYZ> points, Color fillColor)
+        {
+            try
+            {
+                FillPatternElement solidPattern = GetSolidFillPattern(doc);
+                if (solidPattern == null) return;
+
+                // Créer ou récupérer un FilledRegionType avec la couleur voulue
+                FilledRegionType regionType = GetOrCreateFilledRegionType(doc, fillColor, solidPattern.Id);
+                if (regionType == null) return;
+
+                // Construire le CurveLoop à partir des points
+                var loop = new CurveLoop();
+                for (int i = 0; i < points.Count; i++)
+                {
+                    XYZ p1 = new XYZ(points[i].X, points[i].Y, 0);
+                    XYZ p2 = new XYZ(points[(i + 1) % points.Count].X, points[(i + 1) % points.Count].Y, 0);
+                    if (!p1.IsAlmostEqualTo(p2))
+                        loop.Append(Line.CreateBound(p1, p2));
+                }
+                if (loop.NumberOfCurves() < 3) return;
+
+                FilledRegion.Create(doc, regionType.Id, view.Id, new List<CurveLoop> { loop });
+            }
+            catch { }
+        }
+
+        private void DrawFilledCircle(Document doc, Autodesk.Revit.DB.View view, XYZ center, double radius, Color color)
+        {
+            int seg = 20;
+            var pts = new List<XYZ>();
+            for (int i = 0; i < seg; i++)
+            {
+                double a = 2 * Math.PI * i / seg;
+                pts.Add(new XYZ(center.X + radius * Math.Cos(a), center.Y + radius * Math.Sin(a), 0));
+            }
+            DrawFilledRegion(doc, view, pts, color);
+        }
+
+        private void DrawFilledSquare(Document doc, Autodesk.Revit.DB.View view, XYZ center, double size, Color color)
+        {
+            double s = size * 0.85;
+            var pts = new List<XYZ>
+            {
+                new XYZ(center.X - s, center.Y + s, 0),
+                new XYZ(center.X + s, center.Y + s, 0),
+                new XYZ(center.X + s, center.Y - s, 0),
+                new XYZ(center.X - s, center.Y - s, 0),
+            };
+            DrawFilledRegion(doc, view, pts, color);
+        }
+
+        private void DrawFilledTriangle(Document doc, Autodesk.Revit.DB.View view, XYZ center, double size, Color color)
+        {
+            var pts = new List<XYZ>
+            {
+                new XYZ(center.X,              center.Y + size,        0),
+                new XYZ(center.X + size * 0.866, center.Y - size * 0.5, 0),
+                new XYZ(center.X - size * 0.866, center.Y - size * 0.5, 0),
+            };
+            DrawFilledRegion(doc, view, pts, color);
+        }
+
+        private void DrawFilledDiamond(Document doc, Autodesk.Revit.DB.View view, XYZ center, double size, Color color)
+        {
+            var pts = new List<XYZ>
+            {
+                new XYZ(center.X,        center.Y + size, 0),
+                new XYZ(center.X + size, center.Y,        0),
+                new XYZ(center.X,        center.Y - size, 0),
+                new XYZ(center.X - size, center.Y,        0),
+            };
+            DrawFilledRegion(doc, view, pts, color);
+        }
+
+        private void DrawFilledPentagon(Document doc, Autodesk.Revit.DB.View view, XYZ center, double size, Color color)
+        {
+            int n = 5;
+            var pts = new List<XYZ>();
+            for (int i = 0; i < n; i++)
+            {
+                double a = Math.PI / 2 + 2 * Math.PI * i / n;
+                pts.Add(new XYZ(center.X + size * Math.Cos(a), center.Y + size * Math.Sin(a), 0));
+            }
+            DrawFilledRegion(doc, view, pts, color);
+        }
+
+        private FilledRegionType GetOrCreateFilledRegionType(Document doc, Color color, ElementId patternId)
+        {
+            string typeName = $"CHANT_{color.Red}_{color.Green}_{color.Blue}";
+
+            // Chercher si ce type existe déjà (créé dans la transaction 1b)
+            var existing = new FilteredElementCollector(doc)
+                .OfClass(typeof(FilledRegionType))
+                .Cast<FilledRegionType>()
+                .FirstOrDefault(t => t.Name == typeName);
+            if (existing != null) return existing;
+
+            // Créer le type — DOIT être appelé dans une transaction dédiée (pas dans txView)
+            var baseType = new FilteredElementCollector(doc)
+                .OfClass(typeof(FilledRegionType))
+                .Cast<FilledRegionType>()
+                .FirstOrDefault();
+            if (baseType == null) return null;
+
+            var newType = baseType.Duplicate(typeName) as FilledRegionType;
+            if (newType == null) return null;
+
+            newType.ForegroundPatternId    = patternId;
+            newType.ForegroundPatternColor = color;
+            newType.BackgroundPatternId    = patternId;
+            newType.BackgroundPatternColor = color;
+            newType.IsMasking              = false;
+
+            return newType;
+        }
+
         private void DrawLineInView(Document doc, Autodesk.Revit.DB.View view, XYZ start, XYZ end, GraphicsStyle gs)
         {
             Line line = Line.CreateBound(start, end);
@@ -1747,6 +2099,17 @@ namespace CHU_SecurityAnalyzer.Commands
                     return "SURCHARGE (" + count + ")";
                 case "GAINE-005":
                     return "CHARGE (" + count + ")";
+                // Catégorie 5
+                case "CHANT-001":
+                    return "MANUTENTION (" + count + ")";
+                case "CHANT-002":
+                    return "ELEC. HABILIT. (" + count + ")";
+                case "CHANT-003":
+                    return "HAUTEUR (" + count + ")";
+                case "CHANT-004":
+                    return "GAINE INTERDIT (" + count + ")";
+                case "CHANT-005":
+                    return "VENTILATION (" + count + ")";
                 default:
                     return ruleId + " (" + count + ")";
             }

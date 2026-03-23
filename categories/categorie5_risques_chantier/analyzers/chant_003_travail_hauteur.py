@@ -2,40 +2,37 @@
 ============================================================================
 CHANT-003 - Travail en hauteur
 ============================================================================
-Règle: L'installation d'équipements électriques (chemins de câbles, tableaux,
-luminaires, appareillage...) dans des locaux de grande hauteur expose les
-ouvriers à un risque de chute.
+Règle: L'installation d'équipements électriques dans des locaux de grande
+hauteur expose les ouvriers à un risque de chute.
 
-Selon la hauteur d'intervention, un équipement de travail en hauteur
-adapté est obligatoire :
-  < 2m   : OK — pas de matériel spécial requis
-  2m–3m  : Échelle simple
-  3m–4m  : PIR (Plateforme Individuelle Roulante)
-  ≥ 4m   : PEMP (Plateforme Élévatrice Mobile de Personnel)
+La hauteur analysée est celle de la PIÈCE (height_m de l'espace Revit).
+Chaque pièce dont la hauteur dépasse 2m génère 1 violation avec le matériel
+de travail en hauteur adapté.
 
-Sévérité: MOYENNE (2–3m) / HAUTE (3–4m) / CRITIQUE (≥4m)
+Selon la hauteur de la pièce :
+  < 2m        : OK — pas de matériel spécial requis
+  2m – 3m     : Escabeau (travaux légers, maintenance, installation rapide)
+  3m – 4.5m   : PIR/PIRL (Plateforme Individuelle Roulante) — plus stable
+  4.5m – 6m   : Échafaudage roulant équipé de garde-corps
+  6m – 20m    : Échafaudage roulant / fixe
+  ≥ 20m       : Échafaudage fixe ou Nacelle PEMP (10m à 40m+)
+
+Sévérité: MOYENNE (2–3m) / HAUTE (3–6m) / CRITIQUE (≥6m) 
 """
 
 from typing import List, Dict
 from shared.logger import logger
 
 # Seuils de hauteur (mètres)
-SEUIL_ECHELLE_M   = 2.0
-SEUIL_PIR_M       = 3.0
-SEUIL_PEMP_M      = 4.0
-
-# Mots-clés pour identifier les équipements électriques concernés
-EQUIPMENT_KEYWORDS = [
-    "luminaire", "éclairage", "spot", "plafonnier",
-    "chemin de c", "cdc ", "cable tray",
-    "tableau", "armoire", "coffret",
-    "détecteur", "extracteur", "ventilateur",
-    "baes", "diffuseur", "bouche"
-]
+SEUIL_ESCABEAU_M    = 2.0
+SEUIL_PIR_M         = 3.0
+SEUIL_ECHAFAUDAGE_M = 4.5
+SEUIL_ECHAF_FIXE_M  = 6.0
+SEUIL_PEMP_M        = 20.0
 
 
 class CHANT003TravailHauteurChecker:
-    """Analyseur CHANT-003 - Travail en hauteur (conditionnel selon hauteur)"""
+    """Analyseur CHANT-003 - Travail en hauteur (1 violation par pièce trop haute)"""
 
     RULE_ID = "CHANT-003"
     RULE_NAME = "Travail en hauteur"
@@ -48,76 +45,76 @@ class CHANT003TravailHauteurChecker:
                 slabs: List[Dict], space_types: Dict,
                 doors: List[Dict] = None) -> List[Dict]:
         """
-        Vérifie la hauteur d'installation de chaque équipement électrique.
-        Violation si hauteur > 2m.
+        1 violation par pièce dont la hauteur dépasse 2m.
+        La hauteur utilisée est height_m de l'espace (hauteur réelle de la pièce).
         """
         logger.analysis_start(self.RULE_ID)
         self.violations = []
 
-        equip_electriques = [eq for eq in equipment if self._is_electrique(eq)]
-
-        if not equip_electriques:
-            logger.info(f"    Aucun équipement électrique trouvé pour {self.RULE_ID}")
+        if not spaces:
+            logger.info(f"    Aucun espace trouvé pour {self.RULE_ID}")
             return self.violations
 
-        logger.info(f"   {len(equip_electriques)} équipements électriques — analyse hauteur...")
+        logger.info(f"   {len(spaces)} espaces — analyse hauteur des pièces...")
 
-        for eq in equip_electriques:
-            self._check_hauteur(eq)
+        for space in spaces:
+            self._check_espace(space)
 
         logger.analysis_complete(self.RULE_ID, len(self.violations))
         return self.violations
 
-    def _check_hauteur(self, eq: Dict):
-        centroid = eq.get('centroid', (0, 0, 0))
-        hauteur_m = centroid[2] if centroid else 0
+    def _check_espace(self, space: Dict):
+        hauteur_m = space.get('height_m') or 0
 
-        if hauteur_m < SEUIL_ECHELLE_M:
+        if hauteur_m < SEUIL_ESCABEAU_M:
             return  # Pas de risque
 
-        eq_name = eq.get('name', 'Inconnu')
+        space_name = space.get('name', '') or space.get('long_name', 'Inconnu')
+        long_name  = space.get('long_name', '')
+        label      = f"{space_name} — {long_name}" if long_name and long_name != space_name else space_name
 
         if hauteur_m >= SEUIL_PEMP_M:
             severity = "CRITIQUE"
-            materiel = "PEMP (Plateforme Élévatrice Mobile de Personnel) obligatoire"
+            materiel = "Nacelle élévatrice PEMP (10m à 40m+) ou Échafaudage fixe"
             niveau_risque = f"{hauteur_m:.1f}m ≥ {SEUIL_PEMP_M}m"
+        elif hauteur_m >= SEUIL_ECHAF_FIXE_M:
+            severity = "CRITIQUE"
+            materiel = "Échafaudage roulant (6m–12m) équipé de garde-corps obligatoires"
+            niveau_risque = f"{hauteur_m:.1f}m entre {SEUIL_ECHAF_FIXE_M}m et {SEUIL_PEMP_M}m"
+        elif hauteur_m >= SEUIL_ECHAFAUDAGE_M:
+            severity = "HAUTE"
+            materiel = "Échafaudage roulant — doit être stabilisé et équipé de garde-corps"
+            niveau_risque = f"{hauteur_m:.1f}m entre {SEUIL_ECHAFAUDAGE_M}m et {SEUIL_ECHAF_FIXE_M}m"
         elif hauteur_m >= SEUIL_PIR_M:
             severity = "HAUTE"
-            materiel = "PIR (Plateforme Individuelle Roulante) recommandée"
-            niveau_risque = f"{hauteur_m:.1f}m entre {SEUIL_PIR_M}m et {SEUIL_PEMP_M}m"
+            materiel = "PIR/PIRL (Plateforme Individuelle Roulante) — plus stable que l'escabeau"
+            niveau_risque = f"{hauteur_m:.1f}m entre {SEUIL_PIR_M}m et {SEUIL_ECHAFAUDAGE_M}m"
         else:
             severity = "MOYENNE"
-            materiel = "Échelle simple avec dispositif anti-chute"
-            niveau_risque = f"{hauteur_m:.1f}m entre {SEUIL_ECHELLE_M}m et {SEUIL_PIR_M}m"
+            materiel = "Escabeau (pour travaux légers, maintenance, installation rapide)"
+            niveau_risque = f"{hauteur_m:.1f}m entre {SEUIL_ESCABEAU_M}m et {SEUIL_PIR_M}m"
 
         self.violations.append({
-            "rule_id": self.RULE_ID,
-            "severity": severity,
-            "space_name": eq_name,
-            "space_global_id": eq.get('global_id', ''),
-            "description": f"Installation en hauteur ({hauteur_m:.1f}m) — {materiel}",
+            "rule_id":         self.RULE_ID,
+            "severity":        severity,
+            "space_name":      label,
+            "space_global_id": space.get('global_id', ''),
+            "description":     f"Local de {hauteur_m:.1f}m de hauteur — {materiel}",
             "details": {
-                "hauteur_installation_m": round(hauteur_m, 2),
-                "seuil_echelle_m": SEUIL_ECHELLE_M,
-                "seuil_pir_m": SEUIL_PIR_M,
-                "seuil_pemp_m": SEUIL_PEMP_M,
-                "niveau_risque": niveau_risque,
-                "materiel_requis": materiel,
+                "hauteur_piece_m":      round(hauteur_m, 2),
+                "seuil_escabeau_m":     SEUIL_ESCABEAU_M,
+                "seuil_pir_m":          SEUIL_PIR_M,
+                "seuil_echafaudage_m":  SEUIL_ECHAFAUDAGE_M,
+                "seuil_echaf_fixe_m":   SEUIL_ECHAF_FIXE_M,
+                "seuil_pemp_m":         SEUIL_PEMP_M,
+                "niveau_risque":        niveau_risque,
+                "materiel_requis":      materiel,
             },
-            "location": list(centroid),
+            "location":        list(space.get('centroid', [0, 0, 0])),
             "recommendation": (
-                f"Pour l'installation de '{eq_name}' à {hauteur_m:.1f}m : {materiel}. "
-                f"Vérifier la stabilité du sol et dégager la zone de travail."
+                f"Pièce '{label}' : hauteur {hauteur_m:.1f}m. "
+                f"Matériel requis pour toute intervention en hauteur : {materiel}. "
+                f"Vérifier la stabilité du sol et dégager la zone de travail avant montage."
             )
         })
-        logger.rule_violation(self.RULE_ID, eq_name, f"Hauteur {hauteur_m:.1f}m — {materiel}")
-
-    def _is_electrique(self, eq: Dict) -> bool:
-        name = (eq.get('name', '') or '').lower()
-        ifc  = (eq.get('ifc_type', '') or '').lower()
-        for kw in EQUIPMENT_KEYWORDS:
-            if kw in name:
-                return True
-        if any(t in ifc for t in ['light', 'cable', 'electrical', 'outlet', 'alarm']):
-            return True
-        return False
+        logger.rule_violation(self.RULE_ID, label, f"Hauteur pièce {hauteur_m:.1f}m — {materiel}")
